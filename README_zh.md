@@ -82,7 +82,7 @@
 3.  在管理面板中，你可以：
     *   添加和管理你的 Gemini API 密钥。
     *   添加和管理用于访问此 Worker 代理的 API 密钥 (Worker API Keys)。
-	*   设置Pro和Flash系列模型的全局额度（非常重要）
+	*   设置Pro和Flash系列模型的全局额度
     *   查看各个 Gemini API 密钥的使用统计。
     *   配置支持的 Gemini 模型。
 

@@ -83,7 +83,7 @@ Regardless of the deployment method used, you need to perform the following conf
 3.  In the management panel, you can:
     *   Add and manage your Gemini API keys.
     *   Add and manage API keys used to access this Worker proxy (Worker API Keys).
-    *   Set global quotas for Pro and Flash series models (very important).
+    *   Set global quotas for Pro and Flash series models.
     *   View usage statistics for each Gemini API key.
     *   Configure supported Gemini models.
 
