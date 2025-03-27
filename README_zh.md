@@ -1,13 +1,10 @@
 # gemini-proxy-panel
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel)
-<!-- 请注意：你需要将上面的 deploy.workers.cloudflare.com 链接替换为通过 Cloudflare 为你的仓库生成的特定部署链接 -->
 
 ## 简介
 
 `gemini-proxy-panel` 是一个部署在 Cloudflare Workers 上的代理服务。它能够将遵循 OpenAI API 格式的请求转发给 Google Gemini Pro API，从而允许为 OpenAI 开发的应用程序无缝切换或利用 Gemini 模型的能力。
-
-项目地址：[https://github.com/dreamhartley/gemini-proxy-panel](https://github.com/dreamhartley/gemini-proxy-panel)
 
 ## 特色
 
@@ -24,7 +21,6 @@
 ### 快速部署 (推荐)
 
 1.  点击上方的 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel) 按钮。
-    *   **重要**: 你可能需要先 Fork 本仓库，然后通过 Cloudflare 仪表板为你的 Fork 生成特定的部署按钮链接，并更新此 README 中的链接。
 2.  按照 Cloudflare 的提示完成部署流程，授权访问你的 GitHub 仓库。
 3.  部署完成后，你需要进行必要的配置。
 
@@ -86,6 +82,7 @@
 3.  在管理面板中，你可以：
     *   添加和管理你的 Gemini API 密钥。
     *   添加和管理用于访问此 Worker 代理的 API 密钥 (Worker API Keys)。
+	*   设置Pro和Flash系列模型的全局额度（非常重要）
     *   查看各个 Gemini API 密钥的使用统计。
     *   配置支持的 Gemini 模型。
 
