@@ -760,8 +760,13 @@ document.addEventListener('DOMContentLoaded', () => {
         hideError(categoryQuotasErrorDiv);
         const currentQuotas = await loadCategoryQuotas();
         if (currentQuotas) {
-            proQuotaInput.value = currentQuotas.proQuota ?? 0;
-            flashQuotaInput.value = currentQuotas.flashQuota ?? 0;
+            proQuotaInput.value = currentQuotas.proQuota ?? 50;
+            flashQuotaInput.value = currentQuotas.flashQuota ?? 1500;
+            
+            // Set placeholders to show default values
+            proQuotaInput.placeholder = "Default: 50";
+            flashQuotaInput.placeholder = "Default: 1500";
+            
             categoryQuotasModal.classList.remove('hidden');
         } else {
             showError("Could not load current category quotas.", categoryQuotasErrorDiv, categoryQuotasErrorDiv);

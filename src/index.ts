@@ -1270,7 +1270,7 @@ async function handleAdminCategoryQuotas(request: Request, env: Env, ctx: Execut
 		switch (request.method) {
 			case 'GET': {
 				const quotasJson = await env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS);
-				const quotas: CategoryQuotas = quotasJson ? JSON.parse(quotasJson) : { proQuota: 0, flashQuota: 0 }; // Default to 0 if not set
+				const quotas: CategoryQuotas = quotasJson ? JSON.parse(quotasJson) : { proQuota: 50, flashQuota: 1500 }; // Default quotas
 				return new Response(JSON.stringify(quotas), { headers });
 			}
 			case 'POST': {
