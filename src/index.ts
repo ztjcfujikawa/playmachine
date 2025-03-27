@@ -1624,7 +1624,14 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 
 		// IMPORTANT: Parse the JSON string from KV
 		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
-		const today = new Date().toISOString().split('T')[0];
+		// Get current date in Mountain View, CA (America/Los_Angeles) timezone
+		const nowInMV = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+		const dateObjInMV = new Date(nowInMV);
+		const year = dateObjInMV.getFullYear();
+		const month = (dateObjInMV.getMonth() + 1).toString().padStart(2, '0');
+		const day = dateObjInMV.getDate().toString().padStart(2, '0');
+		const todayInMV = `${year}-${month}-${day}`;
+
 
 		// Ensure usage fields exist, providing defaults
 		let currentTotalUsage = keyInfoData.usage || 0;
@@ -1632,10 +1639,10 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 		let modelUsage = keyInfoData.modelUsage || {};
 		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
 
-		// Reset all usage counters for new day
-		if (usageDate !== today) {
+		// Reset all usage counters for new day based on Mountain View time
+		if (usageDate !== todayInMV) {
 			currentTotalUsage = 1;
-			usageDate = today;
+			usageDate = todayInMV; // Use the Mountain View date
 			modelUsage = {};
 			categoryUsage = { pro: 0, flash: 0 };
 
