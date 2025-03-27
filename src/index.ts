@@ -662,6 +662,15 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 			// Log error from Gemini
 			const errorBody = await geminiResponse.text();
 			console.error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBody);
+
+			// --- New: Handle 429 Too Many Requests ---
+			if (geminiResponse.status === 429) {
+				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Forcing quota to limit for today.`);
+				// Force set the quota to its limit for this category/model on this key for today
+				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
+			}
+			// --- End New 429 Handling ---
+
 			return new Response(JSON.stringify({
 				error: {
 					message: `Gemini API Error: ${geminiResponse.statusText} - ${errorBody}`,
@@ -1688,6 +1697,95 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 		console.error(`Failed to increment usage for key ${keyId}:`, e);
 	}
 }
+
+
+/**
+ * Forces the usage count for a specific category/model on a key to its configured daily limit for the current day (Mountain View time).
+ * This is typically called when a 429 error is received from the upstream API.
+ */
+async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string): Promise<void> {
+	const keyKvName = `key:${keyId}`;
+	try {
+		// Fetch current key info
+		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+		if (!keyInfoJson) {
+			console.warn(`Cannot force quota limit: Key info not found for ID: ${keyId}`);
+			return;
+		}
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+
+		// Fetch quota limits
+		const [modelsConfigJson, categoryQuotasJson] = await Promise.all([
+			env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json"),
+			env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json")
+		]);
+		const modelsConfig: Record<string, ModelConfig> = (modelsConfigJson as Record<string, ModelConfig>) || {};
+		const categoryQuotas: CategoryQuotas = (categoryQuotasJson as CategoryQuotas) || { proQuota: Infinity, flashQuota: Infinity };
+
+		// Get current date in Mountain View, CA
+		const nowInMV = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+		const dateObjInMV = new Date(nowInMV);
+		const year = dateObjInMV.getFullYear();
+		const month = (dateObjInMV.getMonth() + 1).toString().padStart(2, '0');
+		const day = dateObjInMV.getDate().toString().padStart(2, '0');
+		const todayInMV = `${year}-${month}-${day}`;
+
+		// Ensure usage fields exist
+		let usageDate = keyInfoData.usageDate || '';
+		let modelUsage = keyInfoData.modelUsage || {};
+		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
+
+		// If the usageDate is not today (MV time), reset everything first
+		if (usageDate !== todayInMV) {
+			usageDate = todayInMV;
+			modelUsage = {};
+			categoryUsage = { pro: 0, flash: 0 };
+			// Don't reset total usage here, as it wasn't necessarily 0 before
+		}
+
+		// Set the specific category/model usage to its limit
+		let quotaLimit = Infinity;
+		switch (category) {
+			case 'Pro':
+				quotaLimit = categoryQuotas.proQuota ?? Infinity;
+				categoryUsage.pro = quotaLimit;
+				console.log(`Forcing Pro usage for key ${keyId} to limit: ${quotaLimit}`);
+				break;
+			case 'Flash':
+				quotaLimit = categoryQuotas.flashQuota ?? Infinity;
+				categoryUsage.flash = quotaLimit;
+				console.log(`Forcing Flash usage for key ${keyId} to limit: ${quotaLimit}`);
+				break;
+			case 'Custom':
+				if (modelId && modelsConfig[modelId]) {
+					quotaLimit = modelsConfig[modelId].dailyQuota ?? Infinity;
+					modelUsage[modelId] = quotaLimit;
+					console.log(`Forcing Custom model ${modelId} usage for key ${keyId} to limit: ${quotaLimit}`);
+				} else {
+					console.warn(`Cannot force quota limit for Custom model: modelId '${modelId}' not provided or not found in config.`);
+					return; // Don't proceed if model info is missing
+				}
+				break;
+		}
+
+		// Update the key info object (preserve other fields)
+		const updatedKeyInfo: Partial<Omit<GeminiKeyInfo, 'id'>> = {
+			...keyInfoData,
+			// Do not update total 'usage' here, just the specific category/model
+			usageDate: usageDate,
+			modelUsage: modelUsage,
+			categoryUsage: categoryUsage,
+		};
+
+		// Save back to KV
+		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
+		console.log(`Key ${keyId} quota forced to limit for category ${category}${category === 'Custom' ? ` (model ${modelId})` : ''} for date ${todayInMV}.`);
+
+	} catch (e) {
+		console.error(`Failed to force quota limit for key ${keyId}:`, e);
+	}
+}
+
 
 // Helper to parse JSON body safely
 async function readRequestBody<T>(request: Request): Promise<T | null> {
