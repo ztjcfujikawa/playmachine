@@ -1,0 +1,1693 @@
+export interface Env {
+	// KV Namespaces
+	GEMINI_KEYS_KV: KVNamespace;
+	WORKER_CONFIG_KV: KVNamespace;
+
+	// Static Assets (for admin UI)
+	ASSETS: Fetcher;
+
+	// Environment Variables
+	ADMIN_PASSWORD?: string;
+	SESSION_SECRET_KEY?: string;
+}
+
+// --- Session Constants ---
+const SESSION_COOKIE_NAME = '__session';
+const SESSION_DURATION_SECONDS = 8 * 60 * 60;
+
+// --- KV Keys ---
+const KV_KEY_MODELS = "models";
+const KV_KEY_CATEGORY_QUOTAS = "category_quotas";
+const KV_KEY_WORKER_KEYS = "worker_keys";
+const KV_KEY_WORKER_KEYS_SAFETY = "worker_keys_safety_settings";
+const KV_KEY_GEMINI_KEY_LIST = "_config:key_list";
+const KV_KEY_GEMINI_KEY_INDEX = "_config:key_index";
+
+// --- Interfaces ---
+// Define the structure for model configuration
+interface ModelConfig {
+	category: 'Pro' | 'Flash' | 'Custom';
+	dailyQuota?: number; // Only applicable for 'Custom' category
+}
+
+// Define the structure for category quotas
+interface CategoryQuotas {
+	proQuota: number;
+	flashQuota: number;
+}
+
+// Define the structure for Gemini Key information stored in KV
+interface GeminiKeyInfo {
+	id: string;
+	key: string;
+	usage: number;
+	usageDate: string;
+	modelUsage?: Record<string, number>;
+	categoryUsage?: { pro: number; flash: number };
+	name?: string;
+}
+
+
+export default {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const url = new URL(request.url);
+		const pathname = url.pathname;
+
+		try {
+			// API endpoint for OpenAI compatibility
+			if (pathname.startsWith('/v1/')) {
+				if (request.method === 'OPTIONS') {
+					return handleOptions(request);
+				}
+				return await handleApiV1(request, env, ctx);
+			}
+
+			// --- Login Page ---
+			if (pathname === '/login') {
+				// Serve login.html using ASSETS fetcher
+				const loginUrl = new URL(url);
+				loginUrl.pathname = '/login.html';
+				const loginRequest = new Request(loginUrl.toString(), request);
+				try {
+					const assetResponse = await env.ASSETS.fetch(loginRequest);
+					if (assetResponse.status === 404) {
+						return new Response(`Login page not found at /public/login.html`, { status: 404 });
+					}
+					return assetResponse;
+				} catch (e) {
+					console.error("Error fetching login page asset:", e);
+					return new Response(`Error fetching login page asset`, { status: 500 });
+				}
+			}
+
+			// --- Login/Logout API ---
+			if (pathname === '/api/login' && request.method === 'POST') {
+				return await handleLoginRequest(request, env);
+			}
+			if (pathname === '/api/logout' && request.method === 'POST') {
+				return handleLogoutRequest();
+			}
+
+			// --- Protected Admin Routes ---
+			const requireAuth = createAuthMiddleware(env);
+
+			// Admin UI endpoint (Protected)
+			if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+				return requireAuth(request, async () => {
+					// Serve static assets for the admin UI (HTML, CSS, JS)
+					const adminPath = pathname === '/admin' || pathname === '/admin/' ? '/admin/index.html' : pathname;
+					const assetUrl = new URL(url);
+					assetUrl.pathname = adminPath;
+					const modifiedRequest = new Request(assetUrl.toString(), request);
+					try {
+						const assetResponse = await env.ASSETS.fetch(modifiedRequest);
+						if (assetResponse.status === 404) {
+							return new Response(`Admin asset not found: ${adminPath}`, { status: 404 });
+						}
+						return assetResponse;
+					} catch (e) {
+						console.error("Error fetching admin asset:", e);
+						return new Response(`Error fetching admin asset: ${adminPath}`, { status: 500 });
+					}
+				});
+			}
+
+			// Internal API for the admin UI (Protected)
+			if (pathname.startsWith('/api/admin/')) {
+				if (request.method === 'OPTIONS') {
+					return handleOptions(request);
+				}
+				return requireAuth(request, async () => {
+					return await handleAdminApi(request, env, ctx);
+				});
+			}
+
+			// --- Root Path ---
+			if (pathname === '/') {
+				const sessionValid = await verifySessionCookie(request, env);
+				if (sessionValid) {
+					return Response.redirect(url.origin + '/admin', 302);
+				} else {
+					return Response.redirect(url.origin + '/login', 302);
+				}
+			}
+
+			// --- Default Not Found ---
+			return new Response('Not Found', { status: 404 });
+
+		} catch (error) {
+			console.error('Error in fetch handler:', error);
+			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+			return new Response(JSON.stringify({ error: errorMessage }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+			});
+		}
+	},
+};
+
+// --- CORS Helper ---
+function corsHeaders(): Record<string, string> {
+	return {
+		'Access-Control-Allow-Origin': '*',
+		'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+		'Access-Control-Allow-Headers': 'Authorization, Content-Type, x-requested-with',
+		'Access-Control-Max-Age': '86400',
+	};
+}
+
+// Handle OPTIONS preflight requests
+function handleOptions(request: Request): Response {
+	// Ensure the request has Access-Control-Request-Method header
+	if (
+		request.headers.get('Origin') !== null &&
+		request.headers.get('Access-Control-Request-Method') !== null &&
+		request.headers.get('Access-Control-Request-Headers') !== null
+	) {
+		// Handle CORS preflight requests.
+		return new Response(null, {
+			headers: corsHeaders(),
+		});
+	} else {
+		// Handle standard OPTIONS request.
+		return new Response(null, {
+			headers: {
+				Allow: 'GET, POST, PUT, DELETE, OPTIONS',
+			},
+		});
+	}
+}
+
+
+// --- API v1 Handler ---
+async function handleApiV1(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	const url = new URL(request.url);
+	const pathname = url.pathname;
+
+	// Worker API Key Authentication
+	const workerApiKey = request.headers.get('Authorization')?.replace('Bearer ', '');
+	if (!workerApiKey || !(await isValidWorkerApiKey(workerApiKey, env))) {
+		return new Response(JSON.stringify({ error: 'Invalid or missing API key' }), {
+			status: 401,
+			headers: { 'Content-Type': 'application/json', ...corsHeaders() },
+		});
+	}
+
+	if (pathname === '/v1/chat/completions') {
+		if (request.method === 'OPTIONS') {
+			return handleOptions(request);
+		}
+		return await handleV1ChatCompletions(request, env, ctx);
+	}
+
+	if (pathname === '/v1/models') {
+		return await handleV1Models(request, env, ctx);
+	}
+
+	return new Response('Not Found in /v1/', { status: 404, headers: corsHeaders() });
+}
+
+// --- API v1 Endpoint Implementations ---
+
+// Helper to parse data URI
+function parseDataUri(dataUri: string): { mimeType: string; data: string } | null {
+	const match = dataUri.match(/^data:(.+?);base64,(.+)$/);
+	if (!match) return null;
+	return { mimeType: match[1], data: match[2] };
+}
+
+// Helper to transform OpenAI request body parts (messages, tools) to Gemini format
+function transformOpenAiToGemini(requestBody: any): { contents: any[]; systemInstruction?: any; tools?: any[] } {
+	const messages = requestBody.messages || [];
+	const openAiTools = requestBody.tools;
+
+	// 1. Transform Messages (existing logic)
+	const contents: any[] = [];
+	let systemInstruction: any | undefined = undefined;
+	messages.forEach((msg: any) => {
+		let role: string | undefined = undefined;
+		let parts: any[] = [];
+
+		// 1. Map Role
+		switch (msg.role) {
+			case 'user':
+				role = 'user';
+				break;
+			case 'assistant':
+				role = 'model';
+				break;
+			case 'system':
+				if (typeof msg.content === 'string') {
+					systemInstruction = { role: "system", parts: [{ text: msg.content }] };
+				} else if (Array.isArray(msg.content)) { // Handle complex system prompts if needed
+					const textContent = msg.content.find((p: any) => p.type === 'text')?.text;
+					if (textContent) {
+						systemInstruction = { role: "system", parts: [{ text: textContent }] };
+					}
+				}
+				return;
+			default:
+				console.warn(`Unknown role encountered: ${msg.role}. Skipping message.`);
+				return;
+		}
+
+		// 2. Map Content to Parts (existing logic)
+		if (typeof msg.content === 'string') {
+			parts.push({ text: msg.content });
+		} else if (Array.isArray(msg.content)) {
+			// Handle multi-part messages (text and images)
+			msg.content.forEach((part: any) => {
+				if (part.type === 'text') {
+					parts.push({ text: part.text });
+				} else if (part.type === 'image_url') {
+					const imageData = parseDataUri(part.image_url?.url);
+					if (imageData) {
+						parts.push({ inlineData: imageData });
+					} else {
+						console.warn(`Could not parse image_url: ${part.image_url?.url}. Skipping image part.`);
+					}
+				} else {
+					console.warn(`Unknown content part type: ${part.type}. Skipping part.`);
+				}
+			});
+		} else {
+			console.warn(`Unsupported content type for role ${msg.role}: ${typeof msg.content}. Skipping message.`);
+			return;
+		}
+
+		// Add the transformed message to contents if it has a role and parts
+		if (role && parts.length > 0) {
+			contents.push({ role, parts });
+		}
+	});
+
+	// 2. Transform Tools
+	let geminiTools: any[] | undefined = undefined;
+	if (openAiTools && Array.isArray(openAiTools) && openAiTools.length > 0) {
+		const functionDeclarations = openAiTools
+			.filter(tool => tool.type === 'function' && tool.function)
+			.map(tool => ({
+				name: tool.function.name,
+				description: tool.function.description,
+				parameters: tool.function.parameters // Assuming OpenAI parameters are valid JSON Schema
+			}));
+
+		if (functionDeclarations.length > 0) {
+			geminiTools = [{ functionDeclarations }];
+		}
+	}
+
+	return { contents, systemInstruction, tools: geminiTools };
+}
+
+
+// Helper to transform Gemini stream chunk to OpenAI stream chunk
+function transformGeminiStreamChunk(geminiChunk: any, modelId: string): string | null {
+	try {
+		if (!geminiChunk || !geminiChunk.candidates || !geminiChunk.candidates.length) {
+			if (geminiChunk?.usageMetadata) {
+				return null;
+			}
+			console.warn("Received empty or invalid Gemini stream chunk:", geminiChunk);
+			return null;
+		}
+
+		const candidate = geminiChunk.candidates[0];
+		let contentText: string | null = null;
+		let toolCalls: any[] | undefined = undefined;
+
+		if (candidate.content?.parts?.length > 0) {
+			const textParts = candidate.content.parts.filter((part: any) => part.text !== undefined);
+			const functionCallParts = candidate.content.parts.filter((part: any) => part.functionCall !== undefined);
+
+			if (textParts.length > 0) {
+				contentText = textParts.map((part: any) => part.text).join("");
+			}
+
+			if (functionCallParts.length > 0) {
+				toolCalls = functionCallParts.map((part: any, index: number) => ({
+					index: index,
+					id: `call_${Date.now()}_${index}`,
+					type: "function",
+					function: {
+						name: part.functionCall.name,
+						arguments: JSON.stringify(part.functionCall.args || {}),
+					},
+				}));
+			}
+		}
+
+		// Determine finish reason
+		let finishReason = candidate.finishReason;
+		if (finishReason === "STOP") finishReason = "stop";
+		else if (finishReason === "MAX_TOKENS") finishReason = "length";
+		else if (finishReason === "SAFETY" || finishReason === "RECITATION") finishReason = "content_filter";
+		else if (finishReason === "TOOL_CALLS" || (toolCalls && !finishReason)) {
+			// If Gemini explicitly says TOOL_CALLS, or if we generated toolCalls and there's no other reason
+			finishReason = "tool_calls";
+		}
+
+		// Construct the delta part
+		const delta: any = {};
+		if (candidate.content?.role && (contentText !== null || toolCalls)) {
+			// Include role only if there's content or tool calls
+			delta.role = candidate.content.role === 'model' ? 'assistant' : candidate.content.role;
+		}
+		if (contentText !== null) {
+			delta.content = contentText;
+		}
+		if (toolCalls) {
+			// In streaming, tool_calls are sent incrementally within the delta
+			delta.tool_calls = toolCalls;
+		}
+
+
+		// Only create a chunk if there's something to send (content, tool_calls, or finish_reason)
+		if (Object.keys(delta).length === 0 && !finishReason) {
+			return null;
+		}
+
+		const openaiChunk = {
+			id: `chatcmpl-${Date.now()}`,
+			object: "chat.completion.chunk",
+			created: Math.floor(Date.now() / 1000),
+			model: modelId,
+			choices: [
+				{
+					index: candidate.index || 0,
+					delta: delta,
+					finish_reason: finishReason || null,
+					logprobs: null,
+				},
+			],
+		};
+
+		return `data: ${JSON.stringify(openaiChunk)}\n\n`;
+
+	} catch (e) {
+		console.error("Error transforming Gemini stream chunk:", e, "Chunk:", geminiChunk);
+		return null;
+	}
+}
+
+// Helper to transform Gemini non-stream response to OpenAI response
+function transformGeminiResponseToOpenAI(geminiResponse: any, modelId: string): string {
+	try {
+		const candidate = geminiResponse.candidates?.[0];
+		if (!candidate) {
+			throw new Error("No candidates found in Gemini response");
+		}
+
+		let contentText: string | null = null;
+		let toolCalls: any[] | undefined = undefined;
+
+		if (candidate.content?.parts?.length > 0) {
+			const textParts = candidate.content.parts.filter((part: any) => part.text !== undefined);
+			const functionCallParts = candidate.content.parts.filter((part: any) => part.functionCall !== undefined);
+
+			if (textParts.length > 0) {
+				contentText = textParts.map((part: any) => part.text).join("");
+			}
+
+			if (functionCallParts.length > 0) {
+				toolCalls = functionCallParts.map((part: any, index: number) => ({
+					id: `call_${Date.now()}_${index}`,
+					type: "function",
+					function: {
+						name: part.functionCall.name,
+						arguments: JSON.stringify(part.functionCall.args || {}),
+					},
+				}));
+			}
+		}
+
+		// Map finish reason
+		let finishReason = candidate.finishReason;
+		if (finishReason === "STOP") finishReason = "stop";
+		else if (finishReason === "MAX_TOKENS") finishReason = "length";
+		else if (finishReason === "SAFETY" || finishReason === "RECITATION") finishReason = "content_filter";
+		else if (finishReason === "TOOL_CALLS" || (toolCalls && !finishReason)) {
+			finishReason = "tool_calls";
+		}
+
+		// Construct the message object
+		const message: any = {
+			role: "assistant",
+			content: contentText,
+		};
+		if (toolCalls) {
+			message.tool_calls = toolCalls;
+		}
+
+		// Map usage
+		const usage = {
+			prompt_tokens: geminiResponse.usageMetadata?.promptTokenCount || 0,
+			completion_tokens: geminiResponse.usageMetadata?.candidatesTokenCount || 0,
+			total_tokens: geminiResponse.usageMetadata?.totalTokenCount || 0,
+		};
+
+		const openaiResponse = {
+			id: `chatcmpl-${Date.now()}`,
+			object: "chat.completion",
+			created: Math.floor(Date.now() / 1000),
+			model: modelId,
+			choices: [
+				{
+					index: candidate.index || 0,
+					message: message,
+					finish_reason: finishReason || null,
+					logprobs: null,
+				},
+			],
+			usage: usage,
+		};
+		return JSON.stringify(openaiResponse);
+	} catch (e) {
+		console.error("Error transforming Gemini non-stream response:", e, "Response:", geminiResponse);
+		// Return an error structure in OpenAI format
+		return JSON.stringify({
+			id: `chatcmpl-${Date.now()}`,
+			object: "chat.completion",
+			created: Math.floor(Date.now() / 1000),
+			model: modelId,
+			choices: [{
+				index: 0,
+				message: { role: "assistant", content: `Error processing Gemini response: ${e instanceof Error ? e.message : String(e)}` },
+				finish_reason: "error",
+			}],
+			usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+		});
+	}
+}
+
+
+async function handleV1ChatCompletions(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	console.log("Handling /v1/chat/completions (Native Gemini)");
+
+	let requestBody: any;
+	let requestedModelId: string | undefined;
+	let stream: boolean = false;
+	let workerApiKey: string | null = null;
+
+	try {
+		requestBody = await request.json();
+		requestedModelId = requestBody?.model;
+		stream = requestBody?.stream ?? false;
+	} catch (e) {
+		console.error("Failed to parse request body:", e);
+		return new Response(JSON.stringify({ error: "Invalid request body" }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+
+	if (!requestedModelId) {
+		return new Response(JSON.stringify({ error: "Missing 'model' field in request body" }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+	if (!requestBody.messages || !Array.isArray(requestBody.messages)) {
+		return new Response(JSON.stringify({ error: "Missing or invalid 'messages' field in request body" }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+
+	// Get and store Worker API Key for later use
+	workerApiKey = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
+
+	// --- Key Selection (Remains the same) ---
+	const selectedKey = await getNextAvailableGeminiKey(env, ctx);
+	if (!selectedKey) {
+		return new Response(JSON.stringify({ error: "No available Gemini API Key configured." }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+
+	// --- New Quota Check Logic ---
+	const modelsConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Record<string, ModelConfig> | null;
+	const categoryQuotasConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json") as CategoryQuotas | null;
+
+	const modelInfo = modelsConfig?.[requestedModelId];
+	if (!modelInfo) {
+		return new Response(JSON.stringify({ error: `Model '${requestedModelId}' is not configured.` }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+	const modelCategory = modelInfo.category;
+
+	const keyKvName = `key:${selectedKey.id}`;
+	const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+	let keyInfoData: Partial<Omit<GeminiKeyInfo, 'id'>> = {};
+	if (keyInfoJson) {
+		try {
+			keyInfoData = JSON.parse(keyInfoJson);
+		} catch (e) {
+			console.error(`Failed to parse key info for quota check (key: ${selectedKey.id}):`, e);
+			return new Response(JSON.stringify({ error: "Internal error checking API key usage" }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+		}
+	}
+
+	const today = new Date().toISOString().split('T')[0];
+	let quotaExceeded = false;
+	let quotaLimit = Infinity;
+	let currentUsage = 0;
+
+	if (keyInfoData.usageDate !== today) {
+		// Usage resets today, so quota cannot be exceeded yet
+		quotaExceeded = false;
+	} else {
+		// Check quota based on category
+		switch (modelCategory) {
+			case 'Pro':
+				quotaLimit = categoryQuotasConfig?.proQuota ?? Infinity;
+				currentUsage = keyInfoData.categoryUsage?.pro ?? 0;
+				if (currentUsage >= quotaLimit) {
+					quotaExceeded = true;
+					console.warn(`Key ${selectedKey.id} Pro category usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
+				}
+				break;
+			case 'Flash':
+				quotaLimit = categoryQuotasConfig?.flashQuota ?? Infinity;
+				currentUsage = keyInfoData.categoryUsage?.flash ?? 0;
+				if (currentUsage >= quotaLimit) {
+					quotaExceeded = true;
+					console.warn(`Key ${selectedKey.id} Flash category usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
+				}
+				break;
+			case 'Custom':
+				quotaLimit = modelInfo.dailyQuota ?? Infinity; // Use model-specific quota
+				currentUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
+				if (currentUsage >= quotaLimit) {
+					quotaExceeded = true;
+					console.warn(`Key ${selectedKey.id} Custom model '${requestedModelId}' usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
+				}
+				break;
+		}
+	}
+
+	if (quotaExceeded) {
+		return new Response(JSON.stringify({ error: `API key quota exceeded for ${modelCategory} category${modelCategory === 'Custom' ? ` model ${requestedModelId}` : ''}. Please try again later or contact support.` }), { status: 429, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+	// --- End New Quota Check ---
+
+
+	// --- Transform Request Body ---
+	// Use the updated transformation function
+	const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody);
+	if (contents.length === 0 && !systemInstruction) {
+		// Allow requests with only tools defined? Let's require at least one message for now.
+		return new Response(JSON.stringify({ error: "No valid user, assistant, or system messages found." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+
+	let safetyEnabled = true; 
+	
+	if (workerApiKey) {
+		const safetySettingsJson = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY);
+		if (safetySettingsJson) {
+			try {
+				const safetySettings = JSON.parse(safetySettingsJson) as Record<string, { safetyEnabled: boolean }>;
+				if (safetySettings[workerApiKey]) {
+					safetyEnabled = safetySettings[workerApiKey].safetyEnabled;
+				}
+			} catch (e) {
+				console.error("Error parsing safety settings:", e);
+			}
+		}
+	}
+	
+	const geminiRequestBody: any = {
+		contents: contents,
+		
+		generationConfig: {
+			...(requestBody.temperature && { temperature: requestBody.temperature }),
+			...(requestBody.top_p && { topP: requestBody.top_p }),
+			...(requestBody.max_tokens && { maxOutputTokens: requestBody.max_tokens }),
+			...(requestBody.stop && { stopSequences: Array.isArray(requestBody.stop) ? requestBody.stop : [requestBody.stop] }),
+		}
+	};
+	
+	if (!safetyEnabled) {
+		geminiRequestBody.safetySettings = [
+			{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+			{ category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+			{ category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+			{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+			{ category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
+		];
+	}
+
+	// Add systemInstruction if present
+	if (systemInstruction) {
+		geminiRequestBody.systemInstruction = systemInstruction;
+	}
+
+	// Add tools if present
+	if (geminiTools) {
+		geminiRequestBody.tools = geminiTools;
+	}
+
+
+	// --- Prepare and Send Request to Gemini ---
+	const apiAction = stream ? 'streamGenerateContent' : 'generateContent';
+	const querySeparator = stream ? '?alt=sse&' : '?';
+	const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
+
+	const headers = new Headers({
+		'Content-Type': 'application/json',
+	});
+
+	try {
+		console.log(`Sending request to Gemini: ${geminiUrl}`);
+
+		const geminiResponse = await fetch(geminiUrl, {
+			method: 'POST',
+			headers: headers,
+			body: JSON.stringify(geminiRequestBody),
+		});
+
+		// Increment usage count (only if successful or specific errors like 429?)
+		if (geminiResponse.ok) {
+			// Pass model category to increment usage correctly
+			ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory));
+		} else {
+			// Log error from Gemini
+			const errorBody = await geminiResponse.text();
+			console.error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBody);
+			return new Response(JSON.stringify({
+				error: {
+					message: `Gemini API Error: ${geminiResponse.statusText} - ${errorBody}`,
+					type: "gemini_api_error",
+					param: null,
+					code: geminiResponse.status
+				}
+			}), {
+				status: geminiResponse.status, // Use Gemini's status code
+				headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+			});
+		}
+
+		// --- Handle Response Transformation ---
+		const responseHeaders = new Headers({
+			'Content-Type': stream ? 'text/event-stream' : 'application/json',
+			'Cache-Control': 'no-cache',
+			'Connection': 'keep-alive',
+			...corsHeaders()
+		});
+
+if (stream && geminiResponse.body) {
+	const textDecoder = new TextDecoder();
+	let buffer = '';
+	
+	// Create a TransformStream to process Gemini SSE chunks
+	const transformer = new TransformStream({
+		async transform(chunk, controller) {
+			buffer += textDecoder.decode(chunk, { stream: true });
+			
+			const lines = buffer.split('\n');
+			buffer = lines.pop() || '';
+			
+			for (const line of lines) {
+				if (line.startsWith('data: ')) {
+					try {
+						if (line.trim() === 'data: [DONE]') {
+							controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+							continue;
+						}
+						
+						const jsonData = JSON.parse(line.substring(6)); // Remove "data: "
+						// console.log("Received Gemini chunk:", JSON.stringify(jsonData, null, 2)); // Verbose
+						
+						const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!); // Pass modelId
+						if (openaiChunkStr) {
+							controller.enqueue(new TextEncoder().encode(openaiChunkStr));
+						}
+					} catch (e) {
+						console.error("Error parsing or transforming stream line:", line, e);
+						controller.enqueue(new TextEncoder().encode(`data: {"error": "Error processing stream chunk: ${e instanceof Error ? e.message : String(e)}"}\n\n`));
+					}
+				}
+			}
+		},
+		flush(controller) {
+			if (buffer.length > 0 && buffer.startsWith('data: ')) {
+				try {
+					if (buffer.trim() === 'data: [DONE]') {
+						controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+					} else {
+						const jsonData = JSON.parse(buffer.substring(6));
+						const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
+						if (openaiChunkStr) {
+							controller.enqueue(new TextEncoder().encode(openaiChunkStr));
+						}
+					}
+				} catch (e) {
+					console.error("Error handling final buffer:", buffer, e);
+				}
+			}
+			
+			controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+		}
+	});
+
+	// Pipe the Gemini response body through the transformer
+	const transformedStream = geminiResponse.body.pipeThrough(transformer);
+
+	return new Response(transformedStream, {
+		status: 200,
+		headers: responseHeaders
+	});
+
+		} else if (!stream) {
+			// Handle non-streaming response
+			const geminiJson = await geminiResponse.json();
+			const openaiJsonString = transformGeminiResponseToOpenAI(geminiJson, requestedModelId!);
+			return new Response(openaiJsonString, {
+				status: 200,
+				headers: responseHeaders
+			});
+		} else {
+			return new Response(JSON.stringify({ error: "Gemini response body missing" }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+		}
+
+	} catch (error) {
+		console.error("Error during Gemini API call or transformation:", error);
+		return new Response(JSON.stringify({ error: `Internal error: ${error instanceof Error ? error.message : String(error)}` }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+}
+
+async function handleV1Models(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	console.log("Handling /v1/models");
+	try {
+		// Fetch models from WORKER_CONFIG_KV
+		const config = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Record<string, ModelConfig> | null;
+		let modelsData: Array<{id: string, object: string, created: number, owned_by: string}> = [];
+		if (config && Object.keys(config).length > 0) {
+			modelsData = Object.keys(config).map(modelId => ({
+				id: modelId,
+				object: "model",
+				created: Math.floor(Date.now() / 1000),
+				owned_by: "google", 
+			}));
+		} else {
+			console.log("No models found in WORKER_CONFIG_KV, returning empty list.");
+		}
+
+		return new Response(JSON.stringify({ object: "list", data: modelsData }), {
+			headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+		});
+	} catch (e) {
+		console.error("Error fetching models from KV:", e);
+		return new Response(JSON.stringify({ error: "Failed to retrieve models" }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+}
+
+// --- Admin API Handler ---
+async function handleAdminApi(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	const url = new URL(request.url);
+	const pathSegments = url.pathname.split('/').filter(Boolean); // e.g., ['api', 'admin', 'gemini-keys']
+
+	if (pathSegments.length < 3) {
+		return new Response(JSON.stringify({ error: "Invalid admin API path" }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+
+	const resource = pathSegments[2];
+	const resourceId = pathSegments[3];
+
+	try {
+		switch (resource) {
+			case 'gemini-keys':
+				return await handleAdminGeminiKeys(request, env, ctx, resourceId);
+			case 'worker-keys':
+				return await handleAdminWorkerKeys(request, env, ctx, resourceId);
+			case 'models':
+				return await handleAdminModels(request, env, ctx, resourceId);
+			case 'category-quotas':
+				return await handleAdminCategoryQuotas(request, env, ctx);
+			case 'test-gemini-key':
+				return await handleTestGeminiKey(request, env, ctx);
+			default:
+				return new Response(JSON.stringify({ error: "Unknown admin resource" }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+		}
+	} catch (error) {
+		console.error(`Error handling admin API for ${resource}:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	}
+}
+
+async function handleTestGeminiKey(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+	if (request.method !== 'POST') {
+		return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for test-gemini-key` }),
+			{ status: 405, headers: { ...headers, 'Allow': 'POST' } });
+	}
+
+	const body = await readRequestBody<{ keyId: string, modelId: string }>(request);
+	if (!body || !body.keyId || !body.modelId) {
+		return new Response(JSON.stringify({ error: 'Request body must include keyId and modelId' }),
+			{ status: 400, headers });
+	}
+
+	const keyKvName = `key:${body.keyId}`;
+	const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+	if (!keyInfoJson) {
+		return new Response(JSON.stringify({ error: `API Key with ID '${body.keyId}' not found.` }),
+			{ status: 404, headers });
+	}
+
+	try {
+		const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+		const apiKey = keyInfoData.key;
+		if (!apiKey) {
+			return new Response(JSON.stringify({ error: 'Invalid API key data stored.' }),
+				{ status: 500, headers });
+		}
+
+		// Fetch model category to pass to incrementKeyUsage
+		const modelsConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Record<string, ModelConfig> | null;
+		const modelCategory = modelsConfig?.[body.modelId]?.category;
+
+		const testGeminiRequestBody = {
+			contents: [{ role: "user", parts: [{ text: "Hi" }] }],
+		};
+
+		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${body.modelId}:generateContent?key=${apiKey}`;
+
+		const response = await fetch(geminiUrl, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify(testGeminiRequestBody)
+		});
+
+		let responseContent = '';
+		let responseJson: any = null;
+		try {
+			responseJson = await response.json();
+			responseContent = JSON.stringify(responseJson);
+		} catch (e) {
+			try {
+				responseContent = await response.text();
+			} catch (textError) {
+				responseContent = 'Failed to parse or read response';
+			}
+		}
+
+		if (response.ok) {
+			ctx.waitUntil(incrementKeyUsage(body.keyId, env, body.modelId, modelCategory));
+		}
+
+		return new Response(JSON.stringify({
+			success: response.ok,
+			status: response.status,
+			content: responseJson ?? responseContent
+		}), { headers });
+
+	} catch (error) {
+		console.error(`Error testing Gemini API key:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+// --- Admin API Resource Handlers ---
+
+async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionContext, resourceId?: string): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+	try {
+		switch (request.method) {
+			case 'GET': {
+				// Fetch models config and category quotas in parallel
+				const [modelsConfigJson, categoryQuotasJson] = await Promise.all([
+					env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json"),
+					env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json")
+				]);
+				const modelsConfig: Record<string, ModelConfig> = (modelsConfigJson as Record<string, ModelConfig>) || {};
+				const categoryQuotas: CategoryQuotas = (categoryQuotasJson as CategoryQuotas) || { proQuota: Infinity, flashQuota: Infinity };
+
+				// List all Gemini keys with their current usage
+				const listResult = await env.GEMINI_KEYS_KV.list({ prefix: 'key:' });
+				const keyPromises = listResult.keys.map(async (keyMeta) => {
+					const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyMeta.name);
+					if (!keyInfoJson) return null;
+					try {
+						const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+						const keyId = keyMeta.name.replace('key:', '');
+						const today = new Date().toISOString().split('T')[0];
+
+						let modelUsageData: Record<string, { count: number; quota?: number }> = {};
+						let categoryUsageData = { pro: 0, flash: 0 };
+
+						if (keyInfoData.usageDate === today) {
+							if (keyInfoData.modelUsage) {
+								Object.entries(keyInfoData.modelUsage).forEach(([modelId, count]) => {
+									if (modelsConfig[modelId]?.category === 'Custom') {
+										modelUsageData[modelId] = {
+											count,
+											quota: modelsConfig[modelId]?.dailyQuota // Get quota from model config
+										};
+									}
+								});
+							}
+							categoryUsageData = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
+						}
+
+						return {
+							id: keyId,
+							name: keyInfoData.name || keyId,
+							keyPreview: `...${(keyInfoData.key || '').slice(-4)}`,
+							usage: keyInfoData.usageDate === today ? (keyInfoData.usage || 0) : 0,
+							usageDate: keyInfoData.usageDate || 'N/A',
+							modelUsage: modelUsageData, 
+							categoryUsage: categoryUsageData,
+							categoryQuotas: categoryQuotas
+						};
+					} catch (e) {
+						console.error(`Error processing key ${keyMeta.name}:`, e);
+						return null;
+					}
+				});
+				const keys = (await Promise.all(keyPromises)).filter(k => k !== null);
+				return new Response(JSON.stringify(keys), { headers });
+			}
+
+			case 'POST': {
+				// Add a new Gemini key
+				const body = await readRequestBody<Partial<Omit<GeminiKeyInfo, 'id'>>>(request);
+				if (!body || typeof body.key !== 'string' || body.key.trim() === '') {
+					return new Response(JSON.stringify({ error: 'Request body must include a valid API key' }), { status: 400, headers });
+				}
+
+				const timestamp = Date.now();
+				const randomString = Math.random().toString(36).substring(2, 8);
+				const keyId = `gk-${timestamp}-${randomString}`;
+				const keyKvName = `key:${keyId}`;
+				const keyName = (typeof body.name === 'string' && body.name.trim()) ? body.name.trim() : keyId;
+				const newKeyInfo: Omit<GeminiKeyInfo, 'id'> = {
+					key: body.key.trim(),
+					usage: 0,
+					usageDate: '', 
+					name: keyName,
+					modelUsage: {},
+					categoryUsage: { pro: 0, flash: 0 }
+				};
+
+				await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(newKeyInfo));
+
+				ctx.waitUntil((async () => {
+					const listJson = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST);
+					const keyList: string[] = listJson ? JSON.parse(listJson) : [];
+					keyList.push(keyId);
+					await env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_LIST, JSON.stringify(keyList));
+					console.log(`Added key ${keyId} to rotation list.`);
+				})());
+
+				return new Response(JSON.stringify({ success: true, id: keyId, name: keyName }), { status: 201, headers });
+			}
+
+			case 'DELETE': {
+				// Delete a Gemini key
+				if (!resourceId) {
+					return new Response(JSON.stringify({ error: 'Missing key ID in path (/api/admin/gemini-keys/:id)' }), { status: 400, headers });
+				}
+				const keyIdToDelete = resourceId.trim();
+				const keyKvName = `key:${keyIdToDelete}`;
+
+				// Check if key exists before deleting
+				if (await env.GEMINI_KEYS_KV.get(keyKvName) === null) {
+					return new Response(JSON.stringify({ error: `Key with ID '${keyIdToDelete}' not found.` }), { status: 404, headers });
+				}
+
+				// Delete key info from KV
+				await env.GEMINI_KEYS_KV.delete(keyKvName);
+
+				// Remove key ID from the list (run in background)
+				ctx.waitUntil((async () => {
+					const listJson = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST);
+					let keyList: string[] = listJson ? JSON.parse(listJson) : [];
+					const initialLength = keyList.length;
+					keyList = keyList.filter(id => id !== keyIdToDelete);
+
+					if (keyList.length < initialLength) {
+						await env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_LIST, JSON.stringify(keyList));
+						console.log(`Removed key ${keyIdToDelete} from rotation list.`);
+						const indexStr = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_INDEX);
+						let currentIndex = indexStr ? parseInt(indexStr, 10) : 0;
+						if (currentIndex >= keyList.length && keyList.length > 0) {
+							await env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_INDEX, "0");
+						} else if (keyList.length === 0) {
+							await env.GEMINI_KEYS_KV.delete(KV_KEY_GEMINI_KEY_INDEX);
+						}
+					}
+				})());
+
+				return new Response(JSON.stringify({ success: true, id: keyIdToDelete }), { headers });
+			}
+
+			default:
+				return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for /api/admin/gemini-keys` }), { status: 405, headers: { ...headers, 'Allow': 'GET, POST, DELETE' } });
+		}
+	} catch (error) {
+		console.error(`Error handling admin API for Gemini Keys:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+async function handleWorkerKeySafetySettings(request: Request, env: Env): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+	if (request.method !== 'POST') {
+		return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for safety-settings` }),
+			{ status: 405, headers: { ...headers, 'Allow': 'POST' } });
+	}
+
+	const body = await readRequestBody<{ key: string; safetyEnabled: boolean }>(request);
+	if (!body || typeof body.key !== 'string' || body.key.trim() === '' || typeof body.safetyEnabled !== 'boolean') {
+		return new Response(JSON.stringify({ error: 'Invalid request body. Must include key (string) and safetyEnabled (boolean).' }),
+			{ status: 400, headers });
+	}
+
+	const workerKey = body.key.trim();
+	const safetyEnabled = body.safetyEnabled;
+
+	try {
+		const keysConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS, "json") as Record<string, any> | null;
+		if (!keysConfig || !keysConfig.hasOwnProperty(workerKey)) {
+			return new Response(JSON.stringify({ error: `Worker key '${workerKey}' not found.` }),
+				{ status: 404, headers });
+		}
+
+		const safetySettingsJson = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY);
+		let safetySettings: Record<string, { safetyEnabled: boolean }> = safetySettingsJson ? JSON.parse(safetySettingsJson) : {};
+
+		safetySettings[workerKey] = { safetyEnabled };
+
+		await env.WORKER_CONFIG_KV.put(KV_KEY_WORKER_KEYS_SAFETY, JSON.stringify(safetySettings));
+
+		return new Response(JSON.stringify({
+			success: true,
+			key: workerKey,
+			safetyEnabled: safetyEnabled
+		}), { headers });
+
+	} catch (error) {
+		console.error(`Error saving worker key safety settings:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+async function handleAdminWorkerKeys(request: Request, env: Env, ctx: ExecutionContext, resourceId?: string): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+	try {
+		if (resourceId === 'safety-settings') {
+			return await handleWorkerKeySafetySettings(request, env);
+		}
+
+		const keysConfigJson = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS);
+		let keysConfig: Record<string, { description?: string; createdAt: string }> = keysConfigJson ? JSON.parse(keysConfigJson) : {};
+
+		switch (request.method) {
+			case 'GET': {
+				// Fetch safety settings as well
+				const safetySettingsJson = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY);
+				let safetySettings: Record<string, { safetyEnabled: boolean }> = {};
+				try {
+					if (safetySettingsJson) {
+						safetySettings = JSON.parse(safetySettingsJson);
+					}
+				} catch (e) {
+					console.error("Error parsing safety settings in GET /worker-keys:", e);
+				}
+
+				const keyList = Object.entries(keysConfig).map(([key, data]) => {
+					const isSafetyEnabled = safetySettings[key]?.safetyEnabled ?? true;
+					return {
+						key: key,
+						description: data.description || '',
+						createdAt: data.createdAt || 'N/A',
+						safetyEnabled: isSafetyEnabled,
+					};
+				});
+				return new Response(JSON.stringify(keyList), { headers });
+			}
+
+			case 'POST': {
+				const body = await readRequestBody<{ key: string; description?: string }>(request);
+				if (!body || typeof body.key !== 'string' || body.key.trim() === '') {
+					return new Response(JSON.stringify({ error: 'Request body must include a valid non-empty string: key' }), { status: 400, headers });
+				}
+				const newKey = body.key.trim();
+				if (keysConfig.hasOwnProperty(newKey)) {
+					return new Response(JSON.stringify({ error: `Worker key '${newKey}' already exists.` }), { status: 409, headers });
+				}
+
+				keysConfig[newKey] = {
+					description: typeof body.description === 'string' ? body.description.trim() : '',
+					createdAt: new Date().toISOString(),
+				};
+
+				await env.WORKER_CONFIG_KV.put(KV_KEY_WORKER_KEYS, JSON.stringify(keysConfig));
+				return new Response(JSON.stringify({ success: true, key: newKey }), { status: 201, headers });
+			}
+
+			case 'DELETE': {
+				// Delete a worker key (using the key itself as resourceId)
+				if (!resourceId) {
+					const url = new URL(request.url);
+					resourceId = url.searchParams.get('key') || undefined;
+					if (!resourceId) {
+						return new Response(JSON.stringify({ error: 'Missing worker key in path (/api/admin/worker-keys/:key) or query param (?key=...)' }), { status: 400, headers });
+					}
+				}
+				const keyToDelete = resourceId.trim();
+
+
+				if (!keysConfig.hasOwnProperty(keyToDelete)) {
+					return new Response(JSON.stringify({ error: `Worker key '${keyToDelete}' not found.` }), { status: 404, headers });
+				}
+
+				delete keysConfig[keyToDelete];
+				await env.WORKER_CONFIG_KV.put(KV_KEY_WORKER_KEYS, JSON.stringify(keysConfig));
+				return new Response(JSON.stringify({ success: true, key: keyToDelete }), { headers });
+			}
+
+			default:
+				return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for Worker Keys` }), { status: 405, headers: { ...headers, 'Allow': 'GET, POST, DELETE' } });
+		}
+	} catch (error) {
+		console.error(`Error handling admin API for Worker Keys:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+async function handleAdminModels(request: Request, env: Env, ctx: ExecutionContext, resourceId?: string): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+	try {
+		// Fetch the current models object (or initialize if null)
+		const modelsConfigJson = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS);
+		let modelsConfig: Record<string, ModelConfig> = modelsConfigJson ? JSON.parse(modelsConfigJson) : {};
+
+		switch (request.method) {
+			case 'GET': {
+				const modelList = Object.entries(modelsConfig).map(([id, data]) => ({
+					id: id,
+					category: data.category,
+					dailyQuota: data.dailyQuota
+				}));
+				return new Response(JSON.stringify(modelList), { headers });
+			}
+
+			case 'POST': {
+				// Add or update a model with category
+				const body = await readRequestBody<{ id: string; category: 'Pro' | 'Flash' | 'Custom'; dailyQuota?: number | string }>(request);
+				if (!body || typeof body.id !== 'string' || body.id.trim() === '') {
+					return new Response(JSON.stringify({ error: 'Request body must include a valid non-empty string: id' }), { status: 400, headers });
+				}
+				if (!body.category || !['Pro', 'Flash', 'Custom'].includes(body.category)) {
+					return new Response(JSON.stringify({ error: 'Request body must include a valid category: Pro, Flash, or Custom' }), { status: 400, headers });
+				}
+				const modelId = body.id.trim();
+				const category = body.category;
+
+				let newQuota: number | undefined = undefined;
+				if (category === 'Custom') {
+					if (body.dailyQuota !== undefined && body.dailyQuota !== null && body.dailyQuota !== '') {
+						const quotaInput = String(body.dailyQuota).trim().toLowerCase();
+						if (quotaInput === 'none' || quotaInput === '0') {
+							newQuota = undefined; // Treat 'none' or '0' as unlimited (undefined)
+						} else {
+							const parsedQuota = parseInt(quotaInput, 10);
+							if (!isNaN(parsedQuota) && parsedQuota > 0 && quotaInput === parsedQuota.toString()) {
+								newQuota = parsedQuota;
+							} else {
+								return new Response(JSON.stringify({ error: "Daily Quota for Custom models must be a positive whole number, 'none', or '0'." }), { status: 400, headers });
+							}
+						}
+					}
+				} else {
+					newQuota = undefined;
+				}
+
+				const isUpdate = modelsConfig.hasOwnProperty(modelId);
+				modelsConfig[modelId] = { category: category, dailyQuota: newQuota };
+
+				await env.WORKER_CONFIG_KV.put(KV_KEY_MODELS, JSON.stringify(modelsConfig));
+				return new Response(JSON.stringify({ success: true, id: modelId, category: category, dailyQuota: newQuota }), { status: isUpdate ? 200 : 201, headers });
+			}
+
+			case 'DELETE': {
+				// Delete a model
+				if (!resourceId) {
+					const url = new URL(request.url);
+					resourceId = url.searchParams.get('id') || undefined;
+					if (!resourceId) {
+						return new Response(JSON.stringify({ error: 'Missing model ID in path (/api/admin/models/:id) or query param (?id=...)' }), { status: 400, headers });
+					}
+				}
+				const modelIdToDelete = resourceId.trim();
+
+				if (!modelsConfig.hasOwnProperty(modelIdToDelete)) {
+					return new Response(JSON.stringify({ error: `Model '${modelIdToDelete}' not found.` }), { status: 404, headers });
+				}
+
+				delete modelsConfig[modelIdToDelete];
+				await env.WORKER_CONFIG_KV.put(KV_KEY_MODELS, JSON.stringify(modelsConfig));
+				return new Response(JSON.stringify({ success: true, id: modelIdToDelete }), { headers });
+			}
+
+			default:
+				return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for Models` }), { status: 405, headers: { ...headers, 'Allow': 'GET, POST, DELETE' } });
+		}
+	} catch (error) {
+		console.error(`Error handling admin API for Models:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+// New handler for category quotas
+async function handleAdminCategoryQuotas(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+	try {
+		switch (request.method) {
+			case 'GET': {
+				const quotasJson = await env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS);
+				const quotas: CategoryQuotas = quotasJson ? JSON.parse(quotasJson) : { proQuota: 0, flashQuota: 0 }; // Default to 0 if not set
+				return new Response(JSON.stringify(quotas), { headers });
+			}
+			case 'POST': {
+				const body = await readRequestBody<Partial<CategoryQuotas>>(request);
+				if (!body || typeof body.proQuota !== 'number' || typeof body.flashQuota !== 'number' || body.proQuota < 0 || body.flashQuota < 0) {
+					return new Response(JSON.stringify({ error: 'Request body must include valid non-negative numbers for proQuota and flashQuota' }), { status: 400, headers });
+				}
+
+				const newQuotas: CategoryQuotas = {
+					proQuota: Math.floor(body.proQuota),
+					flashQuota: Math.floor(body.flashQuota) 
+				};
+
+				await env.WORKER_CONFIG_KV.put(KV_KEY_CATEGORY_QUOTAS, JSON.stringify(newQuotas));
+				return new Response(JSON.stringify({ success: true, ...newQuotas }), { headers });
+			}
+			default:
+				return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for Category Quotas` }), { status: 405, headers: { ...headers, 'Allow': 'GET, POST' } });
+		}
+	} catch (error) {
+		console.error(`Error handling admin API for Category Quotas:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+
+// --- Worker API Key Validation ---
+
+async function isValidWorkerApiKey(apiKey: string, env: Env): Promise<boolean> {
+	if (!apiKey) return false;
+	try {
+		const keysConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS, "json") as Record<string, any> | null;
+		return keysConfig ? keysConfig.hasOwnProperty(apiKey) : false;
+	} catch (e) {
+		console.error("Error validating worker API key:", e);
+		return false;
+	}
+}
+
+
+// --- Session Management & Authentication ---
+
+/**
+ * Encodes data using TextEncoder.
+ */
+function encode(data: string): Uint8Array {
+	const encoder = new TextEncoder();
+	return encoder.encode(data);
+}
+
+/**
+ * Decodes data using TextDecoder.
+ */
+function decode(data: Uint8Array): string {
+	const decoder = new TextDecoder();
+	return decoder.decode(data);
+}
+
+/**
+ * Converts ArrayBuffer to Base64 URL safe string.
+ */
+function bufferToBase64Url(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer);
+	let binary = '';
+	bytes.forEach((byte) => {
+		binary += String.fromCharCode(byte);
+	});
+	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Converts Base64 URL safe string to ArrayBuffer.
+ */
+function base64UrlToBuffer(base64url: string): ArrayBuffer {
+	base64url = base64url.replace(/-/g, '+').replace(/_/g, '/');
+	const padding = base64url.length % 4;
+	if (padding) {
+		base64url += '='.repeat(4 - padding);
+	}
+	const binary = atob(base64url);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i++) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes.buffer;
+}
+
+
+/**
+ * Generates a signed session token (simple structure, not full JWT).
+ * Payload: { exp: number }
+ */
+async function generateSessionToken(env: Env): Promise<string | null> {
+	if (!env.SESSION_SECRET_KEY) {
+		console.error("SESSION_SECRET_KEY is not set. Cannot generate session token.");
+		return null;
+	}
+	try {
+		const expiration = Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS;
+		const payload = JSON.stringify({ exp: expiration });
+		const encodedPayload = bufferToBase64Url(encode(payload));
+
+		const key = await crypto.subtle.importKey(
+			'raw',
+			encode(env.SESSION_SECRET_KEY),
+			{ name: 'HMAC', hash: 'SHA-256' },
+			false,
+			['sign']
+		);
+		const signature = await crypto.subtle.sign('HMAC', key, encode(encodedPayload));
+		const encodedSignature = bufferToBase64Url(signature);
+
+		return `${encodedPayload}.${encodedSignature}`;
+	} catch (e) {
+		console.error("Error generating session token:", e);
+		return null;
+	}
+}
+
+/**
+ * Verifies the signature and expiration of a session token.
+ */
+async function verifySessionToken(token: string, env: Env): Promise<boolean> {
+	if (!env.SESSION_SECRET_KEY) {
+		console.error("SESSION_SECRET_KEY is not set. Cannot verify session token.");
+		return false;
+	}
+	try {
+		const parts = token.split('.');
+		if (parts.length !== 2) return false;
+
+		const [encodedPayload, encodedSignature] = parts;
+		const signature = base64UrlToBuffer(encodedSignature);
+
+		const key = await crypto.subtle.importKey(
+			'raw',
+			encode(env.SESSION_SECRET_KEY),
+			{ name: 'HMAC', hash: 'SHA-256' },
+			false,
+			['verify']
+		);
+
+		// Convert signature ArrayBuffer to Uint8Array for verify function
+		const isValid = await crypto.subtle.verify('HMAC', key, new Uint8Array(signature), encode(encodedPayload));
+		if (!isValid) return false;
+
+		// Convert the ArrayBuffer from base64UrlToBuffer to Uint8Array for decode
+		const payloadJson = decode(new Uint8Array(base64UrlToBuffer(encodedPayload)));
+		const payload = JSON.parse(payloadJson);
+
+		// Check expiration
+		const now = Math.floor(Date.now() / 1000);
+		return payload.exp > now;
+
+	} catch (e) {
+		console.error("Error verifying session token:", e);
+		return false;
+	}
+}
+
+/**
+ * Extracts the session token from the request's Cookie header.
+ */
+function getSessionTokenFromCookie(request: Request): string | null {
+	const cookieHeader = request.headers.get('Cookie');
+	if (!cookieHeader) return null;
+
+	const cookies = cookieHeader.split(';');
+	for (const cookie of cookies) {
+		const [name, value] = cookie.trim().split('=');
+		if (name === SESSION_COOKIE_NAME) {
+			return decodeURIComponent(value);
+		}
+	}
+	return null;
+}
+
+/**
+ * Creates the Set-Cookie header string for the session.
+ */
+function createSessionCookie(token: string): string {
+	const expires = new Date(Date.now() + SESSION_DURATION_SECONDS * 1000);
+	return `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Expires=${expires.toUTCString()}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+/**
+ * Creates the Set-Cookie header string to clear the session cookie.
+ */
+function clearSessionCookie(): string {
+	return `${SESSION_COOKIE_NAME}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`;
+}
+
+/**
+ * Verifies the session cookie from the request.
+ */
+async function verifySessionCookie(request: Request, env: Env): Promise<boolean> {
+	const token = getSessionTokenFromCookie(request);
+	if (!token) return false;
+	return await verifySessionToken(token, env);
+}
+
+/**
+ * Middleware factory to protect routes.
+ */
+function createAuthMiddleware(env: Env) {
+	return async function requireAuth(request: Request, handler: () => Promise<Response>): Promise<Response> {
+		const url = new URL(request.url);
+		const isAuthenticated = await verifySessionCookie(request, env);
+
+		if (!isAuthenticated) {
+			const loginUrl = new URL(url.origin + '/login');
+			return Response.redirect(loginUrl.toString(), 302);
+		}
+
+		return await handler();
+	}
+}
+
+// --- Login/Logout Handlers ---
+
+async function handleLoginRequest(request: Request, env: Env): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+	if (!env.ADMIN_PASSWORD) {
+		console.error("ADMIN_PASSWORD is not set. Cannot process login.");
+		return new Response(JSON.stringify({ error: 'Server configuration error: Admin password not set.' }), { status: 500, headers });
+	}
+	if (!env.SESSION_SECRET_KEY) {
+		console.error("SESSION_SECRET_KEY is not set. Cannot process login.");
+		return new Response(JSON.stringify({ error: 'Server configuration error: Session secret not set.' }), { status: 500, headers });
+	}
+
+	try {
+		const body = await readRequestBody<{ password?: string }>(request);
+		if (!body || typeof body.password !== 'string') {
+			return new Response(JSON.stringify({ error: 'Password is required.' }), { status: 400, headers });
+		}
+
+		if (body.password === env.ADMIN_PASSWORD) {
+			const token = await generateSessionToken(env);
+			if (!token) {
+				return new Response(JSON.stringify({ error: 'Failed to generate session token.' }), { status: 500, headers });
+			}
+			const cookieHeader = createSessionCookie(token);
+			return new Response(JSON.stringify({ success: true }), {
+				status: 200,
+				headers: { ...headers, 'Set-Cookie': cookieHeader }
+			});
+		} else {
+			return new Response(JSON.stringify({ error: 'Invalid password.' }), { status: 401, headers });
+		}
+	} catch (error) {
+		console.error("Error during login:", error);
+		return new Response(JSON.stringify({ error: 'An internal error occurred during login.' }), { status: 500, headers });
+	}
+}
+
+function handleLogoutRequest(): Response {
+	// Clear the session cookie
+	const cookieHeader = clearSessionCookie();
+	return new Response(null, {
+		status: 302,
+		headers: {
+			'Set-Cookie': cookieHeader,
+			'Location': '/login'
+		}
+	});
+}
+
+
+// --- Gemini Key Management ---
+
+/**
+ * Finds the next available Gemini API Key based on round-robin.
+ * Does NOT check quota here. Quota check happens in handleV1ChatCompletions based on the requested model.
+ * Updates the round-robin index for the next request.
+ */
+async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext): Promise<{ id: string; key: string } | null> { // Return only id and key
+	try {
+		const keyListJson = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST);
+		const keyList: string[] = keyListJson ? JSON.parse(keyListJson) : [];
+
+		if (keyList.length === 0) {
+			console.error("No Gemini keys configured in KV under", KV_KEY_GEMINI_KEY_LIST);
+			return null;
+		}
+
+		const indexStr = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_INDEX);
+		let currentIndex = indexStr ? parseInt(indexStr, 10) : 0;
+		if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= keyList.length) {
+			currentIndex = 0; // Reset if index is invalid
+		}
+
+		// Iterate through keys starting from currentIndex, max one full loop
+		for (let i = 0; i < keyList.length; i++) {
+			const keyIndexToCheck = (currentIndex + i) % keyList.length;
+			const keyId = keyList[keyIndexToCheck];
+			const keyKvName = `key:${keyId}`;
+
+			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+			if (!keyInfoJson) {
+				console.warn(`Key info not found for ID: ${keyId} listed in ${KV_KEY_GEMINI_KEY_LIST}. Skipping.`);
+				continue;
+			}
+
+			try {
+				// IMPORTANT: Parse the JSON string from KV
+				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>; // Use Partial for safety
+
+				// Key exists, select it for round-robin
+				console.log(`Selected Gemini Key ID via round-robin: ${keyId}`);
+
+				// Update the index for the *next* request in the background
+				const nextIndex = (keyIndexToCheck + 1) % keyList.length;
+				ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_INDEX, nextIndex.toString()));
+
+				// Return only the ID and the key value needed for the request
+				return {
+					id: keyId,
+					key: keyInfoData.key || '',
+				};
+				// Quota check is moved to handleV1ChatCompletions
+			} catch (parseError) {
+				console.error(`Failed to parse key info for ID: ${keyId}. Skipping. Error:`, parseError);
+				continue;
+			}
+		}
+
+		console.error("All Gemini keys seem misconfigured or unusable.");
+		return null;
+
+	} catch (error) {
+		console.error("Error retrieving or processing Gemini keys from KV:", error);
+		return null;
+	}
+}
+
+/**
+ * Increments the usage count for a given Gemini Key ID in KV.
+ * Resets the count if the date has changed.
+ * Tracks usage per model and per category (Pro/Flash).
+ */
+async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, category?: 'Pro' | 'Flash' | 'Custom'): Promise<void> {
+	const keyKvName = `key:${keyId}`;
+	try {
+		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+		if (!keyInfoJson) {
+			console.warn(`Cannot increment usage: Key info not found for ID: ${keyId}`);
+			return;
+		}
+
+		// IMPORTANT: Parse the JSON string from KV
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+		const today = new Date().toISOString().split('T')[0];
+
+		// Ensure usage fields exist, providing defaults
+		let currentTotalUsage = keyInfoData.usage || 0;
+		let usageDate = keyInfoData.usageDate || '';
+		let modelUsage = keyInfoData.modelUsage || {};
+		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
+
+		// Reset all usage counters for new day
+		if (usageDate !== today) {
+			currentTotalUsage = 1;
+			usageDate = today;
+			modelUsage = {};
+			categoryUsage = { pro: 0, flash: 0 };
+
+			// Initialize counts for the current request
+			if (modelId) {
+				modelUsage[modelId] = 1;
+			}
+			if (category === 'Pro') {
+				categoryUsage.pro = 1;
+			} else if (category === 'Flash') {
+				categoryUsage.flash = 1;
+			}
+		} else {
+			// Same day, just increment counters
+			currentTotalUsage += 1;
+
+			// Update model-specific usage if model ID is provided
+			if (modelId) {
+				modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
+			}
+			// Update category-specific usage if category is Pro or Flash
+			if (category === 'Pro') {
+				categoryUsage.pro = (categoryUsage.pro || 0) + 1;
+			} else if (category === 'Flash') {
+				categoryUsage.flash = (categoryUsage.flash || 0) + 1;
+			}
+		}
+
+		// Create the updated object to store, preserving existing fields
+		const updatedKeyInfo: Partial<Omit<GeminiKeyInfo, 'id'>> = {
+			...keyInfoData,
+			usage: currentTotalUsage,
+			usageDate: usageDate,
+			modelUsage: modelUsage,
+			categoryUsage: categoryUsage,
+		};
+
+		// Put the updated info back into KV
+		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
+		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}`);
+
+	} catch (e) {
+		console.error(`Failed to increment usage for key ${keyId}:`, e);
+	}
+}
+
+// Helper to parse JSON body safely
+async function readRequestBody<T>(request: Request): Promise<T | null> {
+	try {
+		return await request.clone().json<T>();
+	} catch (e) {
+		console.error("Error reading request body:", e);
+		return null;
+	}
+}
