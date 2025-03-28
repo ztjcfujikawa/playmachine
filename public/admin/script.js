@@ -108,6 +108,27 @@ function hideError(container = errorMessageDiv) {
                 window.location.href = '/login';
                 return null;
             }
+            
+            // Check for redirects that might indicate auth issues (302, 307, etc.)
+            if (response.redirected) {
+                const redirectUrl = new URL(response.url);
+                // Check if redirected to login page or similar auth pages
+                if (redirectUrl.pathname.includes('login') || 
+                    !redirectUrl.pathname.includes('/api/admin')) {
+                    console.log("Detected redirect to login page. Session likely expired.");
+                    localStorage.removeItem('isLoggedIn');
+                    window.location.href = '/login';
+                    return null;
+                }
+            }
+            
+            // Additional check for 3xx status codes
+            if (response.status >= 300 && response.status < 400) {
+                console.log(`Redirect status detected: ${response.status}. Handling potential auth issue.`);
+                localStorage.removeItem('isLoggedIn');
+                window.location.href = '/login';
+                return null;
+            }
 
             let data = null;
             const contentType = response.headers.get("content-type");
@@ -862,18 +883,29 @@ function hideError(container = errorMessageDiv) {
                 method: 'GET',
                 credentials: 'include'
             });
-
-            if (!response.ok) {
-                if (response.status === 401 || response.status === 403) {
-                    console.log('User is not authorized. Redirecting to login page.');
+            
+            // Check for redirects that might indicate auth issues
+            if (response.redirected) {
+                const redirectUrl = new URL(response.url);
+                if (redirectUrl.pathname.includes('login') || 
+                    !redirectUrl.pathname.includes('/api/admin')) {
+                    console.log('Detected redirect to login page. Session likely expired.');
                     localStorage.removeItem('isLoggedIn');
                     window.location.href = '/login';
-                    console.error(`Auth check failed with status: ${response.status}`);
+                    return false;
+                }
+            }
+
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403 || 
+                    (response.status >= 300 && response.status < 400)) {
+                    console.log(`User is not authorized. Auth check failed with status: ${response.status}. Redirecting to login page.`);
                     localStorage.removeItem('isLoggedIn');
                     window.location.href = '/login';
                 }
                 return false;
             }
+            
             localStorage.setItem('isLoggedIn', 'true');
             authCheckingUI.classList.add('hidden');
             unauthorizedUI.classList.add('hidden');
@@ -971,6 +1003,42 @@ function hideError(container = errorMessageDiv) {
         });
     }
 
+    function setupAuthRefresh() {
+        const authCheckInterval = 5 * 60 * 1000;
+        
+        setInterval(async () => {
+            console.log("Performing scheduled auth check...");
+            try {
+                const response = await fetch('/api/admin/models', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                
+                if (response.redirected) {
+                    const redirectUrl = new URL(response.url);
+                    if (redirectUrl.pathname.includes('login') || 
+                        !redirectUrl.pathname.includes('/api/admin')) {
+                        console.log('Session expired during scheduled check. Redirecting to login.');
+                        localStorage.removeItem('isLoggedIn');
+                        window.location.href = '/login';
+                    }
+                }
+                
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403 || 
+                        (response.status >= 300 && response.status < 400)) {
+                        console.log(`Auth check failed with status: ${response.status}. Redirecting to login.`);
+                        localStorage.removeItem('isLoggedIn');
+                        window.location.href = '/login';
+                    }
+                }
+            } catch (error) {
+                console.error('Scheduled auth check failed:', error);
+            }
+        }, authCheckInterval);
+    }
+
     initialLoad();
     initDarkMode();
+    setupAuthRefresh();
 });
