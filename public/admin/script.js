@@ -143,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             return data;
         } catch (error) {
-            console.error('API Fetch Error:', error);e
+            console.error('API Fetch Error:', error);
             if (endpoint === '/category-quotas') {
                 showError(error.message || 'An unknown error occurred.', categoryQuotasErrorDiv, categoryQuotasErrorDiv);
             } else {
