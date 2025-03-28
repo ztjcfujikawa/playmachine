@@ -142,7 +142,7 @@ This method is suitable for users who want to manage the code in their own forke
 
 ### API Proxy
 
-1.  Point the API endpoint of your application (originally configured to call the OpenAI API) to your deployed Worker URL (e.g., `https://your-worker-name.your-subdomain.workers.dev`).
+1.  Point the API endpoint of your application (originally configured to call the OpenAI API) to your deployed Worker URL (e.g., `https://your-worker-name.your-subdomain.workers.dev/v1`).
 2.  Ensure that your application includes valid authentication information when sending requests. This is usually done by carrying the "Worker API Key" configured in the management panel in the `Authorization` request header:
     ```
     Authorization: Bearer <your_worker_api_key>
