@@ -987,8 +987,8 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 							const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 							if (keyInfoData.key === body.key.trim()) {
 								return new Response(JSON.stringify({ 
-									error: '无法添加重复的 API 密钥',
-									details: 'API 密钥已存在于系统中'
+									error: 'Cannot add duplicate API key',
+									details: 'The API key already exists in the system'
 								}), { status: 409, headers });
 							}
 						} catch (e) {
