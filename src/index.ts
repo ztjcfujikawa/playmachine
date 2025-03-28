@@ -342,23 +342,28 @@ function transformGeminiStreamChunk(geminiChunk: any, modelId: string): string |
 		if (finishReason === "STOP") finishReason = "stop";
 		else if (finishReason === "MAX_TOKENS") finishReason = "length";
 		else if (finishReason === "SAFETY" || finishReason === "RECITATION") finishReason = "content_filter";
-		else if (finishReason === "TOOL_CALLS" || (toolCalls && !finishReason)) {
-			// If Gemini explicitly says TOOL_CALLS, or if we generated toolCalls and there's no other reason
+		else if (finishReason === "TOOL_CALLS" || (toolCalls && toolCalls.length > 0)) {
+			// Always set to tool_calls if we have tool calls, regardless of the original finish reason
 			finishReason = "tool_calls";
 		}
 
 		// Construct the delta part
 		const delta: any = {};
-		if (candidate.content?.role && (contentText !== null || toolCalls)) {
+		if (candidate.content?.role && (contentText !== null || (toolCalls && toolCalls.length > 0))) {
 			// Include role only if there's content or tool calls
 			delta.role = candidate.content.role === 'model' ? 'assistant' : candidate.content.role;
 		}
-		if (contentText !== null) {
-			delta.content = contentText;
-		}
-		if (toolCalls) {
-			// In streaming, tool_calls are sent incrementally within the delta
+		
+		// Important: If we have tool calls but no content text, explicitly set content to null
+		if (toolCalls && toolCalls.length > 0) {
 			delta.tool_calls = toolCalls;
+			if (contentText === null) {
+				delta.content = null; // Explicitly set to null when there's only tool calls
+			} else {
+				delta.content = contentText;
+			}
+		} else if (contentText !== null) {
+			delta.content = contentText;
 		}
 
 
@@ -426,17 +431,21 @@ function transformGeminiResponseToOpenAI(geminiResponse: any, modelId: string): 
 		if (finishReason === "STOP") finishReason = "stop";
 		else if (finishReason === "MAX_TOKENS") finishReason = "length";
 		else if (finishReason === "SAFETY" || finishReason === "RECITATION") finishReason = "content_filter";
-		else if (finishReason === "TOOL_CALLS" || (toolCalls && !finishReason)) {
+		else if (finishReason === "TOOL_CALLS" || (toolCalls && toolCalls.length > 0)) {
 			finishReason = "tool_calls";
 		}
 
 		// Construct the message object
 		const message: any = {
-			role: "assistant",
-			content: contentText,
+			role: "assistant"
 		};
-		if (toolCalls) {
+		
+		// Important: If we have tool calls but no content text, explicitly set content to null
+		if (toolCalls && toolCalls.length > 0) {
 			message.tool_calls = toolCalls;
+			message.content = contentText !== null ? contentText : null;
+		} else {
+			message.content = contentText;
 		}
 
 		// Map usage
