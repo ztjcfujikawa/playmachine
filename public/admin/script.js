@@ -132,6 +132,11 @@ document.addEventListener('DOMContentLoaded', () => {
                  return { success: true };
             }
 
+            // 409 Conflict
+            if (response.status === 409) {
+                throw new Error(data?.error || 'Existing API key');
+            }
+
             if (!response.ok) {
                 throw new Error(data?.error || `HTTP error! status: ${response.status}`);
             }
