@@ -99,7 +99,7 @@
 
 ### 部署后配置
 
-**无论使用哪种部署方式**，在首次部署成功后，你都需要在 Cloudflare Dashboard 中执行以下配置：
+在首次部署成功后，需要在 Cloudflare Dashboard 中执行以下配置（自动部署无须处理）：
 
 1.  **创建 KV Namespace**:
     *   在 Cloudflare Dashboard 中，导航到 "Workers & Pages" -> "KV"。
