@@ -1,7 +1,7 @@
 # gemini-proxy-panel
 
 [中文介绍](./README_zh.md "中文介绍")<br>
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/${{ github.repository }})
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=.)
 
 ## Introduction
 
