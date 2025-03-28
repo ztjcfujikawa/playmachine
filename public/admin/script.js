@@ -56,12 +56,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 5000);
     }
 
-    function hideError(container = errorMessageDiv) {
-        container.classList.add('hidden');
-        container.textContent = '';
-        const textSpan = container.querySelector('span');
-        if (textSpan) textSpan.textContent = '';
-    }
+function hideError(container = errorMessageDiv) {
+    container.classList.add('hidden');
+    const textSpan = container.querySelector('span#error-text'); 
+    if (textSpan) textSpan.textContent = ''; // Only clear the message span
+}
 
     // Function to show success message and auto-hide
     function showSuccess(message, element = successTextSpan, container = successMessageDiv) {
