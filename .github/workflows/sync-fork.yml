@@ -3,10 +3,25 @@ name: Sync Fork and Redeploy
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' 
 
 jobs:
+  check-if-fork:
+    runs-on: ubuntu-latest
+    outputs:
+      is_fork: ${{ steps.check.outputs.is_fork }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ github.repository_owner }}" != "dreamhartley" ]; then
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          fi
+
   sync-and-deploy:
+    needs: check-if-fork
+    if: needs.check-if-fork.outputs.is_fork == 'true'
     runs-on: ubuntu-latest
     name: Sync fork with upstream and redeploy
     steps:
