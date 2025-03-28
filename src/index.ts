@@ -979,6 +979,24 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 					return new Response(JSON.stringify({ error: 'Request body must include a valid API key' }), { status: 400, headers });
 				}
 
+				const listResult = await env.GEMINI_KEYS_KV.list({ prefix: 'key:' });
+				for (const keyMeta of listResult.keys) {
+					const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyMeta.name);
+					if (keyInfoJson) {
+						try {
+							const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+							if (keyInfoData.key === body.key.trim()) {
+								return new Response(JSON.stringify({ 
+									error: '无法添加重复的 API 密钥',
+									details: 'API 密钥已存在于系统中'
+								}), { status: 409, headers });
+							}
+						} catch (e) {
+							console.error(`Error checking for duplicate key (${keyMeta.name}):`, e);
+						}
+					}
+				}
+
 				const timestamp = Date.now();
 				const randomString = Math.random().toString(36).substring(2, 8);
 				const keyId = `gk-${timestamp}-${randomString}`;
