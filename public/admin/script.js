@@ -628,13 +628,8 @@ function hideError(container = errorMessageDiv) {
 
         if (result && result.success) {
             addGeminiKeyForm.reset();
-            showSuccess('Gemini key added successfully!'); // Show success message immediately
-
-            // --- Workaround: Add a small delay before reloading ---
-            setTimeout(async () => {
-                await loadGeminiKeys(); // Reload the list after the delay
-            }, 500); // Delay for 500 milliseconds
-            // --- End Workaround ---
+            await loadGeminiKeys(); // Wait for the list to reload
+            showSuccess('Gemini key added successfully!');
         }
     });
 
