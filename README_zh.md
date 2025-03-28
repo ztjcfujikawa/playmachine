@@ -2,11 +2,11 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel)
 
-## 简介 (Introduction)
+## 简介
 
 `gemini-proxy-panel` 是一个部署在 Cloudflare Workers 上的代理服务。它可以将 OpenAI API 格式的请求转发给 Google Gemini Pro API，使得为 OpenAI 开发的应用能够无缝切换或利用 Gemini 模型的能力。
 
-## 功能 (Features)
+## 功能
 
 *   **OpenAI 到 Gemini 代理**: 无缝将 OpenAI Chat API 请求转换为 Gemini Pro API 请求。
 *   **多 API Key 轮询**: 支持配置多个 Gemini API Key，并自动轮询使用，以分摊请求负载和规避速率限制。
@@ -17,7 +17,7 @@
 *   **一键部署**: 支持通过 "Deploy to Cloudflare" 按钮快速部署到 Cloudflare Workers 平台。
 *   **GitHub Actions 自动部署**: Fork 仓库后，可通过 GitHub Actions 实现推送代码时自动部署。
 
-## 部署 (Deployment)
+## 部署
 
 你可以选择以下任一方式进行部署：
 
@@ -76,7 +76,7 @@
 6.  **完成部署后配置**:
     *   首次通过 GitHub Actions 部署成功后，你仍然需要按照下面的 **部署后配置** 部分，在 Cloudflare Dashboard 中创建和绑定 KV Namespace，并设置环境变量。
 
-### 方式三：手动部署 (Manual Deployment - 使用 Wrangler)
+### 方式三：手动部署
 
 1.  克隆此仓库:
     ```bash
@@ -97,7 +97,7 @@
     npx wrangler deploy
     ```
 
-### 部署后配置 (Post-Deployment Configuration - 关键步骤)
+### 部署后配置
 
 **无论使用哪种部署方式**，在首次部署成功后，你都需要在 Cloudflare Dashboard 中执行以下配置：
 
@@ -126,9 +126,9 @@
 4.  **重新部署 (如果需要)**:
     *   Cloudflare 通常会自动应用绑定和环境变量的更改。但如果 Worker 没有立即获取到最新的绑定和变量，你可能需要手动触发一次新的部署（例如，通过 Wrangler `npx wrangler deploy`，或者在 Cloudflare Dashboard 编辑代码后点击 "部署"，或者通过 GitHub Actions 再次推送或手动触发）。
 
-## 使用 (Usage)
+## 使用
 
-### 管理面板 (Management Panel)
+### 管理面板
 
 1.  访问你的 Worker URL 的 `/login` 或 `/admin` 路径 (例如: `https://your-worker-name.your-subdomain.workers.dev/login`)。
 2.  使用你设置的 `ADMIN_PASSWORD` 登录。
@@ -139,16 +139,16 @@
     *   查看每个 Gemini API Key 的使用统计。
     *   配置支持的 Gemini 模型。
 
-### API 代理 (API Proxy)
+### API 代理
 
-1.  将你的应用程序的 API 端点（原本配置为调用 OpenAI API 的地址）指向你部署的 Worker URL (例如: `https://your-worker-name.your-subdomain.workers.dev`)。
+1.  将你的应用程序的 API 端点（原本配置为调用 OpenAI API 的地址）指向你部署的 Worker URL (例如: `https://your-worker-name.your-subdomain.workers.dev/v1`)。
 2.  确保你的应用在发送请求时包含有效的身份验证信息。这通常通过在 `Authorization` 请求头中携带在管理面板配置的 "Worker API Key" 来完成：
     ```
     Authorization: Bearer <your_worker_api_key>
     ```
 3.  发送与 OpenAI Chat Completions API 兼容的请求。Worker 会将其转换为 Gemini API 请求，并返回格式化的响应。
 
-## 配置概览 (Configuration Overview)
+## 配置概览
 
 *   **KV Namespaces (必须绑定)**:
     *   `GEMINI_KEYS_KV`: 存储 Gemini API Key 及其使用情况。
