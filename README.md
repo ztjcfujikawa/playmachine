@@ -1,7 +1,7 @@
 # gemini-proxy-panel
 
 [中文介绍](./README_zh.md "中文介绍")<br>
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=.)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel)
 
 ## Introduction
 
@@ -21,7 +21,7 @@
 
 ### Quick Deployment (Recommended)
 
-1.  Click the [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/${{ github.repository }}) button above.
+1.  Click the [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel) button above.
 2.  Follow the prompts from Cloudflare to complete the deployment process, authorizing access to your GitHub repository.
 3.  After deployment, you will need to perform the necessary configurations.
 
