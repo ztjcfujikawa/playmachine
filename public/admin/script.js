@@ -76,7 +76,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Function to hide success message
     function hideSuccess(container = successMessageDiv) {
         container.classList.add('hidden');
-        container.textContent = '';
         const textSpan = container.querySelector('span');
         if (textSpan) textSpan.textContent = '';
     }
