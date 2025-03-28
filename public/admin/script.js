@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingIndicator = document.getElementById('loading-indicator');
     const errorMessageDiv = document.getElementById('error-message');
     const errorTextSpan = document.getElementById('error-text');
+    const successMessageDiv = document.getElementById('success-message');
+    const successTextSpan = document.getElementById('success-text');
     const geminiKeysListDiv = document.getElementById('gemini-keys-list');
     const addGeminiKeyForm = document.getElementById('add-gemini-key-form');
     const workerKeysListDiv = document.getElementById('worker-keys-list');
@@ -48,20 +50,43 @@ document.addEventListener('DOMContentLoaded', () => {
     function showError(message, element = errorTextSpan, container = errorMessageDiv) {
         element.textContent = message;
         container.classList.remove('hidden');
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            hideError(container);
+        }, 5000);
     }
 
     function hideError(container = errorMessageDiv) {
         container.classList.add('hidden');
-        container.textContent = ''; 
-        const textSpan = container.querySelector('span'); 
+        container.textContent = '';
+        const textSpan = container.querySelector('span');
+        if (textSpan) textSpan.textContent = '';
+    }
+
+    // Function to show success message and auto-hide
+    function showSuccess(message, element = successTextSpan, container = successMessageDiv) {
+        element.textContent = message;
+        container.classList.remove('hidden');
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+            hideSuccess(container);
+        }, 3000);
+    }
+
+    // Function to hide success message
+    function hideSuccess(container = successMessageDiv) {
+        container.classList.add('hidden');
+        container.textContent = '';
+        const textSpan = container.querySelector('span');
         if (textSpan) textSpan.textContent = '';
     }
 
     // Generic API fetch function (using cookie auth now)
     async function apiFetch(endpoint, options = {}) {
         showLoading();
-        hideError(); 
-        hideError(categoryQuotasErrorDiv); 
+        hideError();
+        hideError(categoryQuotasErrorDiv);
+        hideSuccess(); // Hide success message on new request
 
         // No need for Authorization header, rely on HttpOnly cookie
         const defaultHeaders = {
@@ -600,7 +625,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (result && result.success) {
             addGeminiKeyForm.reset();
-            loadGeminiKeys();
+            await loadGeminiKeys(); // Wait for the list to reload
+            showSuccess('Gemini key added successfully!');
         }
     });
 
@@ -618,7 +644,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     method: 'DELETE',
                 });
                 if (result && result.success) {
-                    loadGeminiKeys();
+                    await loadGeminiKeys(); // Wait for the list to reload
+                    showSuccess(`Gemini key ${keyId} deleted successfully!`);
                 }
             }
         }
@@ -635,7 +662,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         if (result && result.success) {
             addWorkerKeyForm.reset();
-            loadWorkerKeys();
+            await loadWorkerKeys(); // Wait for the list to reload
+            showSuccess('Worker key added successfully!');
         }
     });
 
@@ -650,7 +678,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     method: 'DELETE',
                 });
                 if (result && result.success) {
-                    loadWorkerKeys();
+                    await loadWorkerKeys(); // Wait for the list to reload
+                    showSuccess(`Worker key ${key} deleted successfully!`);
                 }
             }
         }
@@ -732,8 +761,9 @@ document.addEventListener('DOMContentLoaded', () => {
             addModelForm.reset();
             customQuotaDiv.classList.add('hidden');
             modelQuotaInput.required = false;
-            loadModels();
-            loadGeminiKeys();
+            await loadModels(); // Wait for models to reload
+            await loadGeminiKeys(); // Wait for gemini keys to reload (as model changes affect them)
+            showSuccess(`Model ${data.id} added/updated successfully!`);
         }
     });
 
@@ -748,8 +778,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     method: 'DELETE',
                 });
                 if (result && result.success) {
-                    loadModels();
-                    loadGeminiKeys();
+                    await loadModels(); // Wait for models to reload
+                    await loadGeminiKeys(); // Wait for gemini keys to reload
+                    showSuccess(`Model ${modelId} deleted successfully!`);
                 }
             }
         }
@@ -807,10 +838,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (result && result.success) {
             cachedCategoryQuotas = { proQuota, flashQuota };
             categoryQuotasModal.classList.add('hidden');
-            loadGeminiKeys();
-            alert('Category quotas saved successfully!');
+            await loadGeminiKeys(); // Wait for gemini keys to reload
+            showSuccess('Category quotas saved successfully!');
         } else {
-             // Error already shown by apiFetch
+            // Error already shown by apiFetch
              showError(result?.error || "Failed to save category quotas.", categoryQuotasErrorDiv, categoryQuotasErrorDiv);
         }
     });
