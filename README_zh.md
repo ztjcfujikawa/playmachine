@@ -99,16 +99,16 @@
 
 ### 部署后配置
 
-在首次部署成功后，需要在 Cloudflare Dashboard 中执行以下配置（自动部署无须处理）：
+在首次部署成功后，需要在 Cloudflare Dashboard 中执行以下配置：
 
-1.  **创建 KV Namespace**:
+1.  **创建 KV Namespace**: **（自动部署无须处理）**
     *   在 Cloudflare Dashboard 中，导航到 "Workers & Pages" -> "KV"。
     *   创建两个 KV Namespace:
         *   `GEMINI_KEYS_KV`
         *   `WORKER_CONFIG_KV`
-    *   记下它们的 Namespace ID (虽然绑定时通常通过名称选择即可)。
+    *   记下它们的 Namespace ID。
 
-2.  **将 KV Namespace 绑定到 Worker**:
+2.  **将 KV Namespace 绑定到 Worker**: **（自动部署无须处理）**
     *   导航到你部署的 Worker (位于 "Workers & Pages" 下)。
     *   进入 Worker 的 "设置" (Settings) -> "变量" (Variables)。
     *   在 "KV Namespace 绑定" (KV Namespace Bindings) 部分，点击 "编辑变量" (Edit variables)，然后添加两个绑定:
@@ -116,7 +116,7 @@
         *   变量名称 (Variable name): `WORKER_CONFIG_KV`, KV Namespace: 选择你刚创建的 `WORKER_CONFIG_KV`。
     *   点击 "保存" (Save)。
 
-3.  **设置环境变量**:
+3.  **设置环境变量**: **（都需要处理）**
     *   在同一个 Worker 的 "设置" (Settings) -> "变量" (Variables) 页面。
     *   在 "环境变量" (Environment Variables) 部分，点击 "编辑变量" (Edit variables)，然后添加以下变量 (建议点击变量值右侧的 "加密" (Encrypt) 以提高安全性):
         *   `ADMIN_PASSWORD`: 设置一个安全的密码，用于登录管理面板。
