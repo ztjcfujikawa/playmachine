@@ -13,7 +13,7 @@ export interface Env {
 
 // --- Session Constants ---
 const SESSION_COOKIE_NAME = '__session';
-const SESSION_DURATION_SECONDS = 8 * 60 * 60;
+const SESSION_DURATION_SECONDS = 1 * 60 * 60; 
 
 // --- KV Keys ---
 const KV_KEY_MODELS = "models";
