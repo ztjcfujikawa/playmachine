@@ -37,7 +37,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Global Cache ---
     let cachedModels = [];
-    let cachedGeminiModels = []; // Add cache for available Gemini models
+    let cachedGeminiKeys = []; // Add cache for Gemini API keys
+    let cachedAvailableGeminiModels = []; // Cache for available Gemini models from API
     let cachedCategoryQuotas = { proQuota: 0, flashQuota: 0 };
 
     // --- Utility Functions ---
@@ -200,6 +201,17 @@ function hideError(container = errorMessageDiv) {
         return 'bg-green-500';
     }
 
+    async function loadGeminiKeys() {
+        const keys = await apiFetch('/gemini-keys');
+        if (keys) {
+            cachedGeminiKeys = keys; // Store fetched keys in cache
+            renderGeminiKeys(keys);
+        } else {
+             geminiKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Gemini keys.</p>';
+             cachedGeminiKeys = []; // Clear cache on failure
+        }
+        // No explicit return needed if we rely on cache
+    }
 
     async function renderGeminiKeys(keys) {
         geminiKeysListDiv.innerHTML = ''; // Clear previous list
@@ -553,7 +565,7 @@ function hideError(container = errorMessageDiv) {
 
      function renderModels(models) {
         modelsListDiv.innerHTML = ''; // Clear previous list
-         if (!models || models.length === 0) {
+        if (!models || models.length === 0) {
             modelsListDiv.innerHTML = '<p class="text-gray-500">No models configured.</p>';
             return;
         }
@@ -577,14 +589,7 @@ function hideError(container = errorMessageDiv) {
     }
 
     // --- Data Loading Functions ---
-    async function loadGeminiKeys() {
-        const keys = await apiFetch('/gemini-keys');
-        if (keys) {
-            renderGeminiKeys(keys);
-        } else {
-             geminiKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Gemini keys.</p>';
-        }
-    }
+    // loadGeminiKeys moved above renderGeminiKeys
 
     async function loadWorkerKeys() {
         const keys = await apiFetch('/worker-keys');
@@ -618,88 +623,40 @@ function hideError(container = errorMessageDiv) {
 
     // New function to load available Gemini models
     async function loadGeminiAvailableModels() {
+        // Only proceed if we have Gemini keys in the cache
+        if (!cachedGeminiKeys || cachedGeminiKeys.length === 0) { // Check the cache
+            console.log("No Gemini keys available in cache, skipping model list fetch");
+            return;
+        }
+
         try {
             const models = await apiFetch('/gemini-models');
             if (models && Array.isArray(models)) {
-                cachedGeminiModels = models;
-                
+                cachedAvailableGeminiModels = models; // Update the correct cache
+
                 // Update the model-id input field to include dropdown
-                updateModelIdDropdown(models);
-                
+                updateModelIdDropdown(models); // Pass models directly
+
                 console.log(`Loaded ${models.length} available Gemini models`);
             } else {
-                console.warn("Failed to get models array from API, response:", models);
+                 cachedAvailableGeminiModels = []; // Clear cache on failure/invalid data
             }
         } catch (error) {
             console.error("Failed to load Gemini models:", error);
+             cachedAvailableGeminiModels = []; // Clear cache on error
         }
     }
 
-    // Update the model-id input to include dropdown functionality
-    function updateModelIdDropdown(models) {
-        if (!modelIdInput) {
-            console.error("Model ID input element not found");
-            return;
-        }
-        
-        // 确认datalist是否存在
-        let datalist = document.getElementById('model-suggestions');
-        
-        // 如果datalist不在DOM中，创建一个新的并添加到modelIdInput的旁边
-        if (!datalist) {
-            console.warn("Creating new datalist element since it wasn't found in DOM");
-            datalist = document.createElement('datalist');
-            datalist.id = 'model-suggestions';
-            modelIdInput.parentNode.appendChild(datalist);
-        }
-        
-        // 确保清空现有选项
-        datalist.innerHTML = '';
-        
-        // 直接将测试数据添加到datalist，确保有数据可见
-        const testModels = [
-            "gemini-1.5-pro-latest",
-            "gemini-1.5-flash-latest", 
-            "text-bison-001",
-            "embedding-gecko-001"
-        ];
-        
-        // 首先添加测试数据以确保有选项
-        testModels.forEach(modelId => {
-            const option = document.createElement('option');
-            option.value = modelId;
-            datalist.appendChild(option);
-        });
-        
-        // 再添加实际API返回的模型数据
-        if (Array.isArray(models) && models.length > 0) {
-            console.log(`Populating datalist with ${models.length} models from API`);
-            models.forEach(model => {
-                // 避免重复添加已存在的测试数据
-                if (!testModels.includes(model.id)) {
-                    const option = document.createElement('option');
-                    option.value = model.id;
-                    datalist.appendChild(option);
-                }
-            });
-        } else {
-            console.warn("No models available from API to populate dropdown");
-        }
-        
-        // 确保输入框关联到datalist
-        modelIdInput.setAttribute('list', 'model-suggestions');
-        
-        // 为方便调试，输出DOM中相关元素的状态
-        console.log("Model input element:", modelIdInput);
-        console.log("Datalist element:", datalist);
-        console.log("List attribute on input:", modelIdInput.getAttribute('list'));
-        console.log("Datalist HTML:", datalist.outerHTML);
-        console.log("Datalist option count:", datalist.children.length);
-        
-        // 添加/确保更改事件以根据模型名称自动选择类别
-        modelIdInput.addEventListener('input', function() {
-            const modelValue = this.value.toLowerCase();
-            if (modelValue.includes('pro')) {
+    // Define the input handler function separately to allow removal/re-adding if needed
+    const handleModelInputChange = function() {
+        const modelValue = this.value.toLowerCase();
+        const datalist = document.getElementById('model-suggestions');
+        // Check if the entered value exactly matches one of the datalist options
+        const matchedOption = datalist ? Array.from(datalist.options).find(opt => opt.value === this.value) : null;
+
+        if (matchedOption) {
+            // If it matches, trigger category selection logic
+             if (modelValue.includes('pro')) {
                 modelCategorySelect.value = 'Pro';
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
@@ -707,13 +664,58 @@ function hideError(container = errorMessageDiv) {
                 modelCategorySelect.value = 'Flash';
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
+            } else {
+                 // Optional: default to Custom or clear selection if no keyword found
+                 // modelCategorySelect.value = 'Custom'; // Example: default to Custom
             }
+        } else {
+             // If user is typing something not in the list, maybe clear the category?
+             // modelCategorySelect.value = ''; // Or keep the last selected value
+        }
+        // Trigger change event on select to ensure dependent logic runs (like showing/hiding custom quota)
+        modelCategorySelect.dispatchEvent(new Event('change'));
+    };
+
+
+    // Update the model-id input to include dropdown functionality
+    function updateModelIdDropdown(models) { // Accept models as argument
+        if (!modelIdInput) return;
+
+        // Find or create datalist
+        let datalist = document.getElementById('model-suggestions');
+        if (!datalist) {
+            // Ensure the datalist is appended somewhere sensible, e.g., near the input or at the end of the body
+            const inputContainer = modelIdInput.closest('div.relative'); // Find parent div more specifically
+            datalist = document.createElement('datalist');
+            datalist.id = 'model-suggestions';
+            if (inputContainer) {
+                 inputContainer.appendChild(datalist); // Append inside the relative container
+            } else {
+                 modelIdInput.parentElement.appendChild(datalist); // Append to input's direct parent as fallback
+            }
+        }
+
+        // Clear existing options before adding new ones
+        datalist.innerHTML = '';
+
+        // Add model options to datalist
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            // Optional: Add text content for better display in some browsers, though value is primary
+            // option.textContent = model.id;
+            datalist.appendChild(option);
         });
-        
-        // 添加点击监听，确保下拉列表正常工作
-        modelIdInput.addEventListener('click', function() {
-            console.log("Model input clicked, should show dropdown");
-        });
+
+        // Ensure input is connected to datalist
+        if (modelIdInput.getAttribute('list') !== 'model-suggestions') {
+            modelIdInput.setAttribute('list', 'model-suggestions');
+        }
+
+        // Remove previous listener to prevent duplicates if this function is called again
+        modelIdInput.removeEventListener('input', handleModelInputChange);
+        // Add the input event listener using the defined handler
+        modelIdInput.addEventListener('input', handleModelInputChange);
     }
 
 
@@ -1031,17 +1033,19 @@ function hideError(container = errorMessageDiv) {
         }
 
         try {
+            // Load models and quotas first as they might be needed by key rendering
             const results = await Promise.allSettled([
                 loadModels(),
                 loadCategoryQuotas(),
-                loadWorkerKeys()
+                loadWorkerKeys() // Load worker keys concurrently
             ]);
 
             // Check results for critical failures (models/quotas)
             if (results[0].status === 'rejected') {
                  console.error(`Initial load failed for models:`, results[0].reason);
                  showError('Failed to load essential model data. Please refresh.');
-                 return;
+                 // Potentially return early if models are absolutely required for next steps
+                 // return;
             }
              if (results[1].status === 'rejected') {
                  console.error(`Initial load failed for category quotas:`, results[1].reason);
@@ -1051,8 +1055,10 @@ function hideError(container = errorMessageDiv) {
                  console.error(`Initial load failed for worker keys:`, results[2].reason);
             }
 
+            // Now load Gemini keys, which might depend on models/quotas for rendering
             await loadGeminiKeys();
-            // After loading Gemini keys, try to load available Gemini models
+
+            // Finally, load available Gemini models, which depends on having keys loaded (checked via cache now)
             await loadGeminiAvailableModels();
 
 
