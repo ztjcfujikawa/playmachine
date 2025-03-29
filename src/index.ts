@@ -301,11 +301,20 @@ function transformOpenAiToGemini(requestBody: any): { contents: any[]; systemIns
 	if (openAiTools && Array.isArray(openAiTools) && openAiTools.length > 0) {
 		const functionDeclarations = openAiTools
 			.filter(tool => tool.type === 'function' && tool.function)
-			.map(tool => ({
-				name: tool.function.name,
-				description: tool.function.description,
-				parameters: tool.function.parameters // Assuming OpenAI parameters are valid JSON Schema
-			}));
+			.map(tool => {
+				// Create a copy of the parameters to avoid modifying the original request object
+				const parameters = tool.function.parameters ? { ...tool.function.parameters } : undefined;
+				// Remove the $schema field if it exists in the copy
+				if (parameters && parameters.$schema !== undefined) {
+					delete parameters.$schema;
+					console.log(`Removed '$schema' from parameters for tool: ${tool.function.name}`); // Optional: Log removal
+				}
+				return {
+					name: tool.function.name,
+					description: tool.function.description,
+					parameters: parameters // Assign the modified copy
+				};
+			});
 
 		if (functionDeclarations.length > 0) {
 			geminiTools = [{ functionDeclarations }];
