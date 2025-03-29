@@ -1303,7 +1303,7 @@ async function handleAdminModels(request: Request, env: Env, ctx: ExecutionConte
 						return new Response(JSON.stringify({ error: 'Missing model ID in path (/api/admin/models/:id) or query param (?id=...)' }), { status: 400, headers });
 					}
 				}
-				const modelIdToDelete = resourceId.trim();
+				const modelIdToDelete = decodeURIComponent(resourceId.trim());
 
 				if (!modelsConfig.hasOwnProperty(modelIdToDelete)) {
 					return new Response(JSON.stringify({ error: `Model '${modelIdToDelete}' not found.` }), { status: 404, headers });
