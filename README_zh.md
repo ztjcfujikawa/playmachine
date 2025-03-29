@@ -26,6 +26,7 @@
 1.  点击上方的 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel) 按钮。
 2.  根据 Cloudflare 的提示完成部署流程，授权访问你的 GitHub 仓库。
 3.  部署完成后，你需要进行必要的 **部署后配置**。
+   *   注意，当前项目还在开发中，使用Deploy to Cloudflare一键部署可能导致无法支持后续更新。
 
 ### 方式二：通过 GitHub Actions 自动部署 (推荐)
 
