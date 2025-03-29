@@ -642,29 +642,35 @@ function hideError(container = errorMessageDiv) {
 
     // Update the model-id input to include dropdown functionality
     function updateModelIdDropdown(models) {
-        if (!modelIdInput) return;
-        
-        // Create datalist if it doesn't exist
-        let datalist = document.getElementById('model-suggestions');
-        if (!datalist) {
-            datalist = document.createElement('datalist');
-            datalist.id = 'model-suggestions';
-            modelIdInput.parentElement.appendChild(datalist);
-        } else {
-            datalist.innerHTML = ''; // Clear existing options
+        if (!modelIdInput) {
+            console.error("Model ID input element not found");
+            return;
         }
+        
+        // Always use the existing datalist element in the HTML document
+        const datalist = document.getElementById('model-suggestions');
+        if (!datalist) {
+            console.error("model-suggestions datalist element not found in document");
+            return;
+        }
+        
+        // Clear and repopulate the datalist
+        datalist.innerHTML = ''; // Clear existing options
         
         // Add model options to datalist
-        models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model.id;
-            datalist.appendChild(option);
-        });
-        
-        // Connect input to datalist if not already connected
-        if (!modelIdInput.getAttribute('list')) {
-            modelIdInput.setAttribute('list', 'model-suggestions');
+        if (Array.isArray(models) && models.length > 0) {
+            console.log(`Populating datalist with ${models.length} models`);
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                datalist.appendChild(option);
+            });
+        } else {
+            console.warn("No models available to populate dropdown");
         }
+        
+        // Ensure input is connected to datalist
+        modelIdInput.setAttribute('list', 'model-suggestions');
         
         // Add/ensure change event to auto-select category based on model name
         modelIdInput.addEventListener('input', function() {
