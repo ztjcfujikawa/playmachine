@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const authCheckingUI = document.getElementById('auth-checking');
     const unauthorizedUI = document.getElementById('unauthorized');
     const mainContentUI = document.getElementById('main-content');
-
     // --- Global State & Elements ---
     const loadingIndicator = document.getElementById('loading-indicator');
     const errorMessageDiv = document.getElementById('error-message');
@@ -34,22 +33,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const darkModeToggle = document.getElementById('dark-mode-toggle');
     const sunIcon = document.getElementById('sun-icon');
     const moonIcon = document.getElementById('moon-icon');
-
     // --- Global Cache ---
     let cachedModels = [];
-    let cachedGeminiKeys = []; // Add cache for Gemini API keys
-    let cachedAvailableGeminiModels = []; // Cache for available Gemini models from API
+    let cachedGeminiModels = []; // Add cache for available Gemini models
     let cachedCategoryQuotas = { proQuota: 0, flashQuota: 0 };
-
     // --- Utility Functions ---
     function showLoading() {
         loadingIndicator.classList.remove('hidden');
     }
-
     function hideLoading() {
         loadingIndicator.classList.add('hidden');
     }
-
     function showError(message, element = errorTextSpan, container = errorMessageDiv) {
         element.textContent = message;
         container.classList.remove('hidden');
@@ -58,13 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
             hideError(container);
         }, 5000);
     }
-
 function hideError(container = errorMessageDiv) {
     container.classList.add('hidden');
     const textSpan = container.querySelector('span#error-text'); 
     if (textSpan) textSpan.textContent = ''; // Only clear the message span
 }
-
     // Function to show success message and auto-hide
     function showSuccess(message, element = successTextSpan, container = successMessageDiv) {
         element.textContent = message;
@@ -74,26 +66,22 @@ function hideError(container = errorMessageDiv) {
             hideSuccess(container);
         }, 3000);
     }
-
     // Function to hide success message
     function hideSuccess(container = successMessageDiv) {
         container.classList.add('hidden');
         const textSpan = container.querySelector('span');
         if (textSpan) textSpan.textContent = '';
     }
-
     // Generic API fetch function (using cookie auth now)
     async function apiFetch(endpoint, options = {}) {
         showLoading();
         hideError();
         hideError(categoryQuotasErrorDiv);
         hideSuccess(); // Hide success message on new request
-
         // No need for Authorization header, rely on HttpOnly cookie
         const defaultHeaders = {
             'Content-Type': 'application/json',
         };
-
         try {
             const response = await fetch(`/api/admin${endpoint}`, {
                 credentials: 'include', 
@@ -103,7 +91,6 @@ function hideError(container = errorMessageDiv) {
                     ...(options.headers || {}),
                 },
             });
-
             // Check for auth errors (401 Unauthorized, 403 Forbidden)
             if (response.status === 401 || response.status === 403) {
                 console.log("Authentication required or session expired. Redirecting to login.");
@@ -132,15 +119,13 @@ function hideError(container = errorMessageDiv) {
                 window.location.href = '/login';
                 return null;
             }
-
             let data = null;
             const contentType = response.headers.get("content-type");
             if (contentType && contentType.indexOf("application/json") !== -1) {
                  try {
                     data = await response.json();
                  } catch (e) {
-                    if (response.ok) {
-                        console.warn("Received OK response but failed to parse JSON body.");
+                    if (response.ok) {                        console.warn("Received OK response but failed to parse JSON body.");
                         return { success: true };
                     } else {
                         const errorText = await response.text();
@@ -154,16 +139,13 @@ function hideError(container = errorMessageDiv) {
                  console.log(`Received non-JSON response with status ${response.status}`);
                  return { success: true };
             }
-
             // 409 Conflict
             if (response.status === 409) {
                 throw new Error(data?.error || 'Existing API key');
             }
-
             if (!response.ok) {
                 throw new Error(data?.error || `HTTP error! status: ${response.status}`);
             }
-
             return data;
         } catch (error) {
             console.error('API Fetch Error:', error);
@@ -177,14 +159,11 @@ function hideError(container = errorMessageDiv) {
             hideLoading();
         }
     }
-
     // --- Rendering Functions ---
-
     // Helper to format quota display (Infinity becomes ∞)
     function formatQuota(quota) {
         return (quota === undefined || quota === null || quota === Infinity) ? '∞' : quota;
     }
-
     // Helper to calculate remaining percentage for progress bar
     function calculateRemainingPercentage(count, quota) {
         if (quota === undefined || quota === null || quota === Infinity || quota <= 0) {
@@ -193,24 +172,11 @@ function hideError(container = errorMessageDiv) {
         const percentage = Math.max(0, 100 - (count / quota * 100));
         return percentage;
     }
-
     // Helper to get progress bar color based on percentage
     function getProgressColor(percentage) {
         if (percentage < 25) return 'bg-red-500';
         if (percentage < 50) return 'bg-yellow-500';
         return 'bg-green-500';
-    }
-
-    async function loadGeminiKeys() {
-        const keys = await apiFetch('/gemini-keys');
-        if (keys) {
-            cachedGeminiKeys = keys; // Store fetched keys in cache
-            renderGeminiKeys(keys);
-        } else {
-             geminiKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Gemini keys.</p>';
-             cachedGeminiKeys = []; // Clear cache on failure
-        }
-        // No explicit return needed if we rely on cache
     }
 
     async function renderGeminiKeys(keys) {
@@ -219,23 +185,19 @@ function hideError(container = errorMessageDiv) {
             geminiKeysListDiv.innerHTML = '<p class="text-gray-500">No Gemini keys configured.</p>';
             return;
         }
-
         // Ensure models and category quotas are cached (should be loaded in initialLoad)
         if (cachedModels.length === 0) {
             console.warn("Models cache is empty during renderGeminiKeys. Load may be incomplete.");
         }
-
         // Create a card container using a grid layout
         const keysGrid = document.createElement('div');
         keysGrid.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
         geminiKeysListDiv.appendChild(keysGrid);
-
         keys.forEach(key => {
             // Create a simplified card for each key
             const cardItem = document.createElement('div');
             cardItem.className = 'card-item p-4 border rounded-md bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer';
             cardItem.dataset.keyId = key.id;
-
             // Simple card content, displaying basic information only
             cardItem.innerHTML = `
                 <div class="flex items-center justify-between">
@@ -249,12 +211,10 @@ function hideError(container = errorMessageDiv) {
                 </div>
             `;
             keysGrid.appendChild(cardItem);
-
             // Create a hidden detailed information modal
             const detailModal = document.createElement('div');
             detailModal.className = 'fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 hidden';
             detailModal.dataset.modalFor = key.id;
-
             // --- Start Modal HTML ---
             let modalHTML = `
                 <div class="modal-content bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto mx-4">
@@ -280,13 +240,11 @@ function hideError(container = errorMessageDiv) {
                         <button data-id="${key.id}" class="test-gemini-key text-blue-500 hover:text-blue-700 font-medium px-3 py-1 border border-blue-500 rounded">Test</button>
                         <button data-id="${key.id}" class="delete-gemini-key text-red-500 hover:text-red-700 font-medium px-3 py-1 border border-red-500 rounded">Delete</button>
                     </div>
-
                     <!-- Category Usage Section -->
                     <div class="border-t border-gray-200 pt-4 mb-4">
                         <h3 class="text-lg font-medium text-gray-800 mb-3">Category Usage</h3>
                         <div class="space-y-4">
             `;
-
             // Pro Category Usage
             const proUsage = key.categoryUsage?.pro || 0;
             const proQuota = cachedCategoryQuotas.proQuota;
@@ -295,7 +253,6 @@ function hideError(container = errorMessageDiv) {
             const proRemainingDisplay = formatQuota(proRemaining);
             const proRemainingPercentage = calculateRemainingPercentage(proUsage, proQuota);
             const proProgressColor = getProgressColor(proRemainingPercentage);
-
             modalHTML += `
                 <div>
                     <div class="flex justify-between mb-1">
@@ -307,7 +264,6 @@ function hideError(container = errorMessageDiv) {
                     </div>
                 </div>
             `;
-
             // Flash Category Usage
             const flashUsage = key.categoryUsage?.flash || 0;
             const flashQuota = cachedCategoryQuotas.flashQuota;
@@ -316,7 +272,6 @@ function hideError(container = errorMessageDiv) {
             const flashRemainingDisplay = formatQuota(flashRemaining);
             const flashRemainingPercentage = calculateRemainingPercentage(flashUsage, flashQuota);
             const flashProgressColor = getProgressColor(flashRemainingPercentage);
-
             modalHTML += `
                 <div>
                     <div class="flex justify-between mb-1">
@@ -328,26 +283,22 @@ function hideError(container = errorMessageDiv) {
                     </div>
                 </div>
             `;
-
             modalHTML += `
                         </div>
                     </div>
             `;
-
             // Custom Model Usage Section (Only if there are custom models used by this key)
             const customModelUsageEntries = Object.entries(key.modelUsage || {})
                 .filter(([modelId, usageData]) => {
                     const model = cachedModels.find(m => m.id === modelId);
                     return model?.category === 'Custom';
                 });
-
             if (customModelUsageEntries.length > 0) {
                 modalHTML += `
                     <div class="border-t border-gray-200 pt-4 mb-4">
                         <h3 class="text-lg font-medium text-gray-800 mb-3">Custom Model Usage</h3>
                         <div class="space-y-4">
                 `;
-
                 customModelUsageEntries.forEach(([modelId, usageData]) => {
                     const count = usageData.count || 0;
                     const quota = usageData.quota; // Quota is now included in the key data for custom models
@@ -356,7 +307,6 @@ function hideError(container = errorMessageDiv) {
                     const remainingDisplay = formatQuota(remaining);
                     const remainingPercentage = calculateRemainingPercentage(count, quota);
                     const progressColor = getProgressColor(remainingPercentage);
-
                     modalHTML += `
                         <div>
                             <div class="flex justify-between mb-1">
@@ -369,13 +319,11 @@ function hideError(container = errorMessageDiv) {
                         </div>
                     `;
                 });
-
                 modalHTML += `
                         </div>
                     </div>
                 `;
             }
-
 
             // Add test section (remains mostly the same, uses cachedModels)
             modalHTML += `
@@ -395,26 +343,21 @@ function hideError(container = errorMessageDiv) {
                     </div>
                 </div>
             `;
-
             // Close modal div
             modalHTML += `</div>`;
             // --- End Modal HTML ---
-
             detailModal.innerHTML = modalHTML;
             document.body.appendChild(detailModal);
-
 
             // Add click event to the card to display the detailed information modal
             cardItem.addEventListener('click', () => {
                 detailModal.classList.remove('hidden');
             });
-
             // Add event to the close button
             const closeBtn = detailModal.querySelector('.close-modal');
             closeBtn.addEventListener('click', () => {
                 detailModal.classList.add('hidden');
             });
-
             // Close by clicking outside the modal
             detailModal.addEventListener('click', (e) => {
                 if (e.target === detailModal) {
@@ -422,13 +365,11 @@ function hideError(container = errorMessageDiv) {
                 }
             });
         });
-
         // Add test button click event (no changes needed here)
         document.querySelectorAll('.test-gemini-key').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const keyId = e.target.dataset.id;
                 const testSection = document.querySelector(`.test-model-section[data-key-id="${keyId}"]`);
-
                 // Toggle display status
                 if (testSection.classList.contains('hidden')) {
                     // Hide all other test areas
@@ -436,7 +377,6 @@ function hideError(container = errorMessageDiv) {
                         section.classList.add('hidden');
                         section.querySelector('.test-result')?.classList.add('hidden');
                     });
-
                     // Show current test area
                     testSection.classList.remove('hidden');
                 } else {
@@ -444,7 +384,6 @@ function hideError(container = errorMessageDiv) {
                 }
             });
         });
-
         // Add run test button click event (no changes needed here)
         document.querySelectorAll('.run-test-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
@@ -453,27 +392,22 @@ function hideError(container = errorMessageDiv) {
                 const modelId = testSection.querySelector('.model-select').value;
                 const resultDiv = testSection.querySelector('.test-result');
                 const resultPre = resultDiv.querySelector('pre');
-
                 if (!modelId) {
                     showError('Please select a model to test');
                     return;
                 }
-
                 // Show result area and set "Loading" text
                 resultDiv.classList.remove('hidden');
                 resultPre.textContent = 'Testing...';
-
                 // Send test request
                 const result = await apiFetch('/test-gemini-key', {
                     method: 'POST',
                     body: JSON.stringify({ keyId, modelId })
                 });
-
                 if (result) {
                     const formattedContent = typeof result.content === 'object'
                         ? JSON.stringify(result.content, null, 2)
                         : result.content;
-
                     if (result.success) {
                         resultPre.textContent = `Test Passed!\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
                         resultPre.className = 'text-xs bg-green-50 text-green-800 p-2 rounded overflow-x-auto';
@@ -488,17 +422,14 @@ function hideError(container = errorMessageDiv) {
             });
         });
     }
-
     function renderWorkerKeys(keys) {
         workerKeysListDiv.innerHTML = ''; // Clear previous list
         if (!keys || keys.length === 0) {
             workerKeysListDiv.innerHTML = '<p class="text-gray-500">No Worker keys configured.</p>';
             return;
         }
-
         keys.forEach(key => {
             const isSafetyEnabled = key.safetyEnabled !== undefined ? key.safetyEnabled : true;
-
             const item = document.createElement('div');
             item.className = 'p-3 border rounded-md';
             item.innerHTML = `
@@ -528,10 +459,8 @@ function hideError(container = errorMessageDiv) {
                     </div>
                 </div>
             `;
-
             workerKeysListDiv.appendChild(item);
         });
-
         // Add styles for toggle switch
         const style = document.createElement('style');
         style.textContent = `
@@ -547,7 +476,6 @@ function hideError(container = errorMessageDiv) {
             }
         `;
         document.head.appendChild(style);
-
         // Add event listeners for safety toggles
         document.querySelectorAll('.safety-toggle').forEach(toggle => {
             toggle.addEventListener('change', function() {
@@ -557,15 +485,13 @@ function hideError(container = errorMessageDiv) {
                 statusText.textContent = isEnabled ? 'Enabled' : 'Disabled';
                 statusText.className = `text-xs font-medium ${isEnabled ? 'text-green-600' : 'text-red-600'}`;
                 saveSafetySettingsToServer(key, isEnabled);
-
                 console.log(`Safety settings for key ${key} set to ${isEnabled ? 'enabled' : 'disabled'}`);
             });
         });
     }
-
      function renderModels(models) {
         modelsListDiv.innerHTML = ''; // Clear previous list
-        if (!models || models.length === 0) {
+         if (!models || models.length === 0) {
             modelsListDiv.innerHTML = '<p class="text-gray-500">No models configured.</p>';
             return;
         }
@@ -576,7 +502,6 @@ function hideError(container = errorMessageDiv) {
             if (model.category === 'Custom') {
                 quotaDisplay += ` (Quota: ${model.dailyQuota === undefined ? 'Unlimited' : model.dailyQuota})`;
             }
-
             item.innerHTML = `
                 <div>
                     <p class="font-semibold text-gray-800">${model.id}</p>
@@ -587,10 +512,15 @@ function hideError(container = errorMessageDiv) {
             modelsListDiv.appendChild(item);
         });
     }
-
     // --- Data Loading Functions ---
-    // loadGeminiKeys moved above renderGeminiKeys
-
+    async function loadGeminiKeys() {
+        const keys = await apiFetch('/gemini-keys');
+        if (keys) {
+            renderGeminiKeys(keys);
+        } else {
+             geminiKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Gemini keys.</p>';
+        }
+    }
     async function loadWorkerKeys() {
         const keys = await apiFetch('/worker-keys');
         if (keys) {
@@ -599,7 +529,6 @@ function hideError(container = errorMessageDiv) {
              workerKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Worker keys.</p>';
         }
     }
-
     async function loadModels() {
         const models = await apiFetch('/models');
         if (models) {
@@ -609,7 +538,6 @@ function hideError(container = errorMessageDiv) {
              modelsListDiv.innerHTML = '<p class="text-red-500">Failed to load models.</p>';
         }
     }
-
     // New function to load category quotas
     async function loadCategoryQuotas() {
         const quotas = await apiFetch('/category-quotas');
@@ -620,114 +548,90 @@ function hideError(container = errorMessageDiv) {
         }
         return quotas;
     }
-
     // New function to load available Gemini models
     async function loadGeminiAvailableModels() {
-        // Only proceed if we have Gemini keys in the cache
-        if (!cachedGeminiKeys || cachedGeminiKeys.length === 0) { // Check the cache
-            console.log("No Gemini keys available in cache, skipping model list fetch");
+        // Only proceed if we have Gemini keys
+        const geminiKeysList = document.querySelectorAll('#gemini-keys-list .card-item');
+        if (geminiKeysList.length === 0) {
+            console.log("No Gemini keys available, skipping model list fetch");
             return;
         }
-
+        
         try {
             const models = await apiFetch('/gemini-models');
             if (models && Array.isArray(models)) {
-                cachedAvailableGeminiModels = models; // Update the correct cache
-
+                cachedGeminiModels = models;
+                
                 // Update the model-id input field to include dropdown
-                updateModelIdDropdown(models); // Pass models directly
-
+                updateModelIdDropdown(models);
+                
                 console.log(`Loaded ${models.length} available Gemini models`);
-            } else {
-                 cachedAvailableGeminiModels = []; // Clear cache on failure/invalid data
             }
         } catch (error) {
             console.error("Failed to load Gemini models:", error);
-             cachedAvailableGeminiModels = []; // Clear cache on error
         }
     }
-
-    // Define the input handler function separately to allow removal/re-adding if needed
-    const handleModelInputChange = function() {
-        const modelValue = this.value.toLowerCase();
-        const datalist = document.getElementById('model-suggestions');
-        // Check if the entered value exactly matches one of the datalist options
-        const matchedOption = datalist ? Array.from(datalist.options).find(opt => opt.value === this.value) : null;
-
-        if (matchedOption) {
-            // If it matches, trigger category selection logic
-             if (modelValue.includes('pro')) {
+    // Update the model-id input field to include dropdown
+    function updateModelIdDropdown(models) {
+        if (!modelIdInput) return;
+        
+        // Get parent container for proper placement
+        const inputContainer = modelIdInput.parentElement;
+        
+        // Create datalist if it doesn't exist, or clear existing one
+        let datalist = document.getElementById('model-suggestions');
+        if (!datalist) {
+            datalist = document.createElement('datalist');
+            datalist.id = 'model-suggestions';
+            // Add datalist near the input field instead of the body
+            inputContainer.appendChild(datalist);
+        } else {
+            datalist.innerHTML = ''; // Clear existing options
+        }
+        
+        // Add model options to datalist with clearer labels
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            // Add label if available
+            if (model.object) {
+                option.textContent = `${model.id} (${model.object})`;
+            }
+            datalist.appendChild(option);
+        });
+        
+        // Explicitly connect input to datalist
+        modelIdInput.setAttribute('list', 'model-suggestions');
+        
+        // Add/ensure change event to auto-select category based on model name
+        modelIdInput.addEventListener('input', function() {
+            const modelValue = this.value.toLowerCase();
+            if (modelValue.includes('pro')) {
                 modelCategorySelect.value = 'Pro';
+                // Hide custom quota div if it was visible
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
             } else if (modelValue.includes('flash')) {
                 modelCategorySelect.value = 'Flash';
+                // Hide custom quota div if it was visible
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
-            } else {
-                 // Optional: default to Custom or clear selection if no keyword found
-                 // modelCategorySelect.value = 'Custom'; // Example: default to Custom
             }
-        } else {
-             // If user is typing something not in the list, maybe clear the category?
-             // modelCategorySelect.value = ''; // Or keep the last selected value
-        }
-        // Trigger change event on select to ensure dependent logic runs (like showing/hiding custom quota)
-        modelCategorySelect.dispatchEvent(new Event('change'));
-    };
-
-
-    // Update the model-id input to include dropdown functionality
-    function updateModelIdDropdown(models) { // Accept models as argument
-        if (!modelIdInput) return;
-
-        // Find or create datalist
-        let datalist = document.getElementById('model-suggestions');
-        if (!datalist) {
-            // Ensure the datalist is appended somewhere sensible, e.g., near the input or at the end of the body
-            const inputContainer = modelIdInput.closest('div.relative'); // Find parent div more specifically
-            datalist = document.createElement('datalist');
-            datalist.id = 'model-suggestions';
-            if (inputContainer) {
-                 inputContainer.appendChild(datalist); // Append inside the relative container
-            } else {
-                 modelIdInput.parentElement.appendChild(datalist); // Append to input's direct parent as fallback
-            }
-        }
-
-        // Clear existing options before adding new ones
-        datalist.innerHTML = '';
-
-        // Add model options to datalist
-        models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model.id;
-            // Optional: Add text content for better display in some browsers, though value is primary
-            // option.textContent = model.id;
-            datalist.appendChild(option);
+            // For other models, let user select the category
         });
-
-        // Ensure input is connected to datalist
-        if (modelIdInput.getAttribute('list') !== 'model-suggestions') {
-            modelIdInput.setAttribute('list', 'model-suggestions');
-        }
-
-        // Remove previous listener to prevent duplicates if this function is called again
-        modelIdInput.removeEventListener('input', handleModelInputChange);
-        // Add the input event listener using the defined handler
-        modelIdInput.addEventListener('input', handleModelInputChange);
+        
+        // Add some visual indicator that the dropdown is available
+        modelIdInput.setAttribute('placeholder', 'Click to select a model or type...');
+        
+        console.log(`Loaded ${models.length} model suggestions into dropdown`);
     }
-
-
     // --- Event Handlers ---
-
     // Add Gemini Key (no changes needed)
     addGeminiKeyForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(addGeminiKeyForm);
         const data = Object.fromEntries(formData.entries());
         const geminiKeyValue = data.key ? data.key.trim() : '';
-
         // --- Gemini API Key Format Validation ---
         const geminiKeyRegex = /^AIzaSy[A-Za-z0-9_-]{33}$/;
         if (!geminiKeyValue) {
@@ -739,25 +643,21 @@ function hideError(container = errorMessageDiv) {
             return; // Stop submission if format is incorrect
         }
         // --- End Validation ---
-
         // Create the data object to send, without the id field
         const keyData = {
             key: geminiKeyValue,
             name: data.name ? data.name.trim() : ''
         };
-
         const result = await apiFetch('/gemini-keys', {
             method: 'POST',
             body: JSON.stringify(keyData),
         });
-
         if (result && result.success) {
             addGeminiKeyForm.reset();
             await loadGeminiKeys(); // Wait for the list to reload
             showSuccess('Gemini key added successfully!');
         }
     });
-
     // Delete Gemini Key (no changes needed)
     document.addEventListener('click', async (e) => {
         if (e.target.classList.contains('delete-gemini-key')) {
@@ -767,7 +667,6 @@ function hideError(container = errorMessageDiv) {
                 if (modal) {
                     modal.classList.add('hidden');
                 }
-
                 const result = await apiFetch(`/gemini-keys/${keyId}`, {
                     method: 'DELETE',
                 });
@@ -778,7 +677,6 @@ function hideError(container = errorMessageDiv) {
             }
         }
     });
-
      // Add Worker Key (no changes needed)
     addWorkerKeyForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -794,12 +692,10 @@ function hideError(container = errorMessageDiv) {
             showSuccess('Worker key added successfully!');
         }
     });
-
      // Delete Worker Key (no changes needed)
     workerKeysListDiv.addEventListener('click', async (e) => {
         if (e.target.classList.contains('delete-worker-key')) {
             const key = e.target.dataset.key;
-
              // Use key in the path for deletion, matching backend expectation
             if (confirm(`Are you sure you want to delete Worker key: ${key}?`)) {
                 const result = await apiFetch(`/worker-keys/${encodeURIComponent(key)}`, {
@@ -812,7 +708,6 @@ function hideError(container = errorMessageDiv) {
             }
         }
     });
-
     // Save safety settings (no changes needed)
     async function saveSafetySettingsToServer(key, isEnabled) {
         try {
@@ -832,13 +727,11 @@ function hideError(container = errorMessageDiv) {
             showError('Failed to sync safety settings with server. Changes may not persist across browsers.');
         }
     }
-
     // Generate Random Worker Key (no changes needed)
     generateWorkerKeyBtn.addEventListener('click', () => {
         const randomKey = 'wk-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
         workerKeyValueInput.value = randomKey;
     });
-
     // --- Model Form Logic ---
     // Show/hide Custom Quota input based on category selection
     modelCategorySelect.addEventListener('change', (e) => {
@@ -851,7 +744,6 @@ function hideError(container = errorMessageDiv) {
             modelQuotaInput.value = '';
         }
     });
-
     // Add/Update Model - Modified Submit Handler
     addModelForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -860,7 +752,6 @@ function hideError(container = errorMessageDiv) {
             id: formData.get('id').trim(),
             category: formData.get('category')
         };
-
         // Only include dailyQuota if category is 'Custom' and input is visible/filled
         if (data.category === 'Custom') {
             const quotaInput = formData.get('dailyQuota')?.trim().toLowerCase();
@@ -868,7 +759,6 @@ function hideError(container = errorMessageDiv) {
                  showError("Daily Quota is required for Custom models. Enter a positive number, 'none', or '0'.");
                  return; // Stop submission
             }
-
             if (quotaInput === 'none' || quotaInput === '0') {
             } else {
                 const quotaValue = parseInt(quotaInput, 10);
@@ -879,12 +769,10 @@ function hideError(container = errorMessageDiv) {
                 data.dailyQuota = quotaValue;
             }
         }
-
         const result = await apiFetch('/models', {
             method: 'POST',
             body: JSON.stringify(data),
         });
-
         if (result && result.success) {
             addModelForm.reset();
             customQuotaDiv.classList.add('hidden');
@@ -894,12 +782,10 @@ function hideError(container = errorMessageDiv) {
             showSuccess(`Model ${data.id} added/updated successfully!`);
         }
     });
-
      // Delete Model (no changes needed)
     modelsListDiv.addEventListener('click', async (e) => {
         if (e.target.classList.contains('delete-model')) {
             const modelId = e.target.dataset.id;
-
              // Use model ID in the path for deletion, matching backend expectation
             if (confirm(`Are you sure you want to delete model: ${modelId}?`)) {
                 const result = await apiFetch(`/models/${encodeURIComponent(modelId)}`, {
@@ -913,7 +799,6 @@ function hideError(container = errorMessageDiv) {
             }
         }
     });
-
     // --- Category Quotas Modal Logic ---
     setCategoryQuotasBtn.addEventListener('click', async () => {
         hideError(categoryQuotasErrorDiv);
@@ -931,38 +816,30 @@ function hideError(container = errorMessageDiv) {
             showError("Could not load current category quotas.", categoryQuotasErrorDiv, categoryQuotasErrorDiv);
         }
     });
-
     closeCategoryQuotasModalBtn.addEventListener('click', () => {
         categoryQuotasModal.classList.add('hidden');
     });
-
     cancelCategoryQuotasBtn.addEventListener('click', () => {
         categoryQuotasModal.classList.add('hidden');
     });
-
     categoryQuotasModal.addEventListener('click', (e) => {
         if (e.target === categoryQuotasModal) {
             categoryQuotasModal.classList.add('hidden');
         }
     });
-
     categoryQuotasForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         hideError(categoryQuotasErrorDiv);
-
         const proQuota = parseInt(proQuotaInput.value, 10);
         const flashQuota = parseInt(flashQuotaInput.value, 10);
-
         if (isNaN(proQuota) || proQuota < 0 || isNaN(flashQuota) || flashQuota < 0) {
             showError("Quotas must be non-negative numbers.", categoryQuotasErrorDiv, categoryQuotasErrorDiv);
             return;
         }
-
         const result = await apiFetch('/category-quotas', {
             method: 'POST',
             body: JSON.stringify({ proQuota, flashQuota }),
         });
-
         if (result && result.success) {
             cachedCategoryQuotas = { proQuota, flashQuota };
             categoryQuotasModal.classList.add('hidden');
@@ -974,7 +851,6 @@ function hideError(container = errorMessageDiv) {
         }
     });
 
-
     // Verify if the user is authorized; redirect directly if not
     async function checkAuth() {
         try {
@@ -982,7 +858,6 @@ function hideError(container = errorMessageDiv) {
                 window.location.href = '/login';
                 return false;
             }
-
             const response = await fetch('/api/admin/models', { // Use an existing simple GET endpoint
                 method: 'GET',
                 credentials: 'include'
@@ -999,7 +874,6 @@ function hideError(container = errorMessageDiv) {
                     return false;
                 }
             }
-
             if (!response.ok) {
                 if (response.status === 401 || response.status === 403 || 
                     (response.status >= 300 && response.status < 400)) {
@@ -1015,7 +889,6 @@ function hideError(container = errorMessageDiv) {
             unauthorizedUI.classList.add('hidden');
             mainContentUI.classList.remove('hidden');
             return true;
-
         } catch (error) {
             console.error('Authorization check failed:', error);
             localStorage.removeItem('isLoggedIn');
@@ -1023,7 +896,6 @@ function hideError(container = errorMessageDiv) {
             return false;
         }
     }
-
     // --- Initial Load ---
     async function initialLoad() {
         const isAuthorized = await checkAuth();
@@ -1031,21 +903,18 @@ function hideError(container = errorMessageDiv) {
             console.log('User is not authorized. Aborting initial load.');
             return;
         }
-
         try {
-            // Load models and quotas first as they might be needed by key rendering
             const results = await Promise.allSettled([
                 loadModels(),
                 loadCategoryQuotas(),
-                loadWorkerKeys() // Load worker keys concurrently
+                loadWorkerKeys(),
+                loadGeminiAvailableModels() // Call this earlier in the loading process
             ]);
-
             // Check results for critical failures (models/quotas)
             if (results[0].status === 'rejected') {
                  console.error(`Initial load failed for models:`, results[0].reason);
                  showError('Failed to load essential model data. Please refresh.');
-                 // Potentially return early if models are absolutely required for next steps
-                 // return;
+                 return;
             }
              if (results[1].status === 'rejected') {
                  console.error(`Initial load failed for category quotas:`, results[1].reason);
@@ -1054,19 +923,14 @@ function hideError(container = errorMessageDiv) {
              if (results[2].status === 'rejected') {
                  console.error(`Initial load failed for worker keys:`, results[2].reason);
             }
-
-            // Now load Gemini keys, which might depend on models/quotas for rendering
             await loadGeminiKeys();
-
-            // Finally, load available Gemini models, which depends on having keys loaded (checked via cache now)
-            await loadGeminiAvailableModels();
-
+            // After loading Gemini keys, try to load available Gemini models
+            // await loadGeminiAvailableModels();
 
         } catch (error) {
             console.error('Failed to load data:', error);
             showError('Failed to load data. Please refresh the page or try again later.');
         }
-
         // Add logout button functionality
         if (logoutButton) {
             logoutButton.addEventListener('click', async () => {
@@ -1083,7 +947,6 @@ function hideError(container = errorMessageDiv) {
             });
         }
     }
-
     function initDarkMode() {
         const savedTheme = localStorage.getItem('theme');
         if (savedTheme === 'dark') {
@@ -1095,10 +958,8 @@ function hideError(container = errorMessageDiv) {
             sunIcon.classList.remove('hidden');
             moonIcon.classList.add('hidden');
         }
-
         darkModeToggle.addEventListener('click', () => {
             const currentTheme = document.body.getAttribute('data-theme');
-
             if (currentTheme === 'light') {
                 document.body.setAttribute('data-theme', 'dark');
                 localStorage.setItem('theme', 'dark');
@@ -1112,7 +973,6 @@ function hideError(container = errorMessageDiv) {
             }
         });
     }
-
     function setupAuthRefresh() {
         const authCheckInterval = 5 * 60 * 1000;
         
@@ -1147,7 +1007,6 @@ function hideError(container = errorMessageDiv) {
             }
         }, authCheckInterval);
     }
-
     initialLoad();
     initDarkMode();
     setupAuthRefresh();
