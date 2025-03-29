@@ -232,11 +232,12 @@ function parseDataUri(dataUri: string): { mimeType: string; data: string } | nul
 }
 
 // Helper to transform OpenAI request body parts (messages, tools) to Gemini format
-function transformOpenAiToGemini(requestBody: any): { contents: any[]; systemInstruction?: any; tools?: any[] } {
+// Added requestedModelId parameter
+function transformOpenAiToGemini(requestBody: any, requestedModelId?: string): { contents: any[]; systemInstruction?: any; tools?: any[] } {
 	const messages = requestBody.messages || [];
 	const openAiTools = requestBody.tools;
 
-	// 1. Transform Messages (existing logic)
+	// 1. Transform Messages
 	const contents: any[] = [];
 	let systemInstruction: any | undefined = undefined;
 	messages.forEach((msg: any) => {
@@ -252,18 +253,28 @@ function transformOpenAiToGemini(requestBody: any): { contents: any[]; systemIns
 				role = 'model';
 				break;
 			case 'system':
-				if (typeof msg.content === 'string') {
-					systemInstruction = { role: "system", parts: [{ text: msg.content }] };
-				} else if (Array.isArray(msg.content)) { // Handle complex system prompts if needed
-					const textContent = msg.content.find((p: any) => p.type === 'text')?.text;
-					if (textContent) {
-						systemInstruction = { role: "system", parts: [{ text: textContent }] };
+				// Check if the model is gemma-based
+				if (requestedModelId && requestedModelId.startsWith('gemma')) {
+					// If gemma, treat system prompt as a user message
+					console.log(`Gemma model detected (${requestedModelId}). Treating system message as user message.`);
+					role = 'user';
+					// Content processing for 'user' role will happen below
+				} else {
+					// Original logic for non-gemma models: create systemInstruction
+					if (typeof msg.content === 'string') {
+						systemInstruction = { role: "system", parts: [{ text: msg.content }] };
+					} else if (Array.isArray(msg.content)) { // Handle complex system prompts if needed
+						const textContent = msg.content.find((p: any) => p.type === 'text')?.text;
+						if (textContent) {
+							systemInstruction = { role: "system", parts: [{ text: textContent }] };
+						}
 					}
+					return; // Skip adding this message to 'contents' for non-gemma
 				}
-				return;
+				break; // Break for 'system' role (gemma case falls through to content processing)
 			default:
 				console.warn(`Unknown role encountered: ${msg.role}. Skipping message.`);
-				return;
+				return; // Skip unknown roles
 		}
 
 		// 2. Map Content to Parts (existing logic)
@@ -616,11 +627,11 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 
 
 	// --- Transform Request Body ---
-	// Use the updated transformation function
-	const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody);
+	// Pass requestedModelId to the transformation function
+	const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody, requestedModelId);
 	if (contents.length === 0 && !systemInstruction) {
-		// Allow requests with only tools defined? Let's require at least one message for now.
-		return new Response(JSON.stringify({ error: "No valid user, assistant, or system messages found." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+		// Require at least one message even if tools are present
+		return new Response(JSON.stringify({ error: "No valid user, assistant messages found (system messages converted for gemma)." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 	}
 
 	let safetyEnabled = true; 
