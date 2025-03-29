@@ -618,13 +618,6 @@ function hideError(container = errorMessageDiv) {
 
     // New function to load available Gemini models
     async function loadGeminiAvailableModels() {
-        // Only proceed if we have Gemini keys
-        const geminiKeysList = document.querySelectorAll('#gemini-keys-list .card-item');
-        if (geminiKeysList.length === 0) {
-            console.log("No Gemini keys available, skipping model list fetch");
-            return;
-        }
-        
         try {
             const models = await apiFetch('/gemini-models');
             if (models && Array.isArray(models)) {
@@ -634,6 +627,8 @@ function hideError(container = errorMessageDiv) {
                 updateModelIdDropdown(models);
                 
                 console.log(`Loaded ${models.length} available Gemini models`);
+            } else {
+                console.warn("Failed to get models array from API, response:", models);
             }
         } catch (error) {
             console.error("Failed to load Gemini models:", error);
@@ -647,46 +642,77 @@ function hideError(container = errorMessageDiv) {
             return;
         }
         
-        // Always use the existing datalist element in the HTML document
-        const datalist = document.getElementById('model-suggestions');
+        // 确认datalist是否存在
+        let datalist = document.getElementById('model-suggestions');
+        
+        // 如果datalist不在DOM中，创建一个新的并添加到modelIdInput的旁边
         if (!datalist) {
-            console.error("model-suggestions datalist element not found in document");
-            return;
+            console.warn("Creating new datalist element since it wasn't found in DOM");
+            datalist = document.createElement('datalist');
+            datalist.id = 'model-suggestions';
+            modelIdInput.parentNode.appendChild(datalist);
         }
         
-        // Clear and repopulate the datalist
-        datalist.innerHTML = ''; // Clear existing options
+        // 确保清空现有选项
+        datalist.innerHTML = '';
         
-        // Add model options to datalist
+        // 直接将测试数据添加到datalist，确保有数据可见
+        const testModels = [
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-flash-latest", 
+            "text-bison-001",
+            "embedding-gecko-001"
+        ];
+        
+        // 首先添加测试数据以确保有选项
+        testModels.forEach(modelId => {
+            const option = document.createElement('option');
+            option.value = modelId;
+            datalist.appendChild(option);
+        });
+        
+        // 再添加实际API返回的模型数据
         if (Array.isArray(models) && models.length > 0) {
-            console.log(`Populating datalist with ${models.length} models`);
+            console.log(`Populating datalist with ${models.length} models from API`);
             models.forEach(model => {
-                const option = document.createElement('option');
-                option.value = model.id;
-                datalist.appendChild(option);
+                // 避免重复添加已存在的测试数据
+                if (!testModels.includes(model.id)) {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    datalist.appendChild(option);
+                }
             });
         } else {
-            console.warn("No models available to populate dropdown");
+            console.warn("No models available from API to populate dropdown");
         }
         
-        // Ensure input is connected to datalist
+        // 确保输入框关联到datalist
         modelIdInput.setAttribute('list', 'model-suggestions');
         
-        // Add/ensure change event to auto-select category based on model name
+        // 为方便调试，输出DOM中相关元素的状态
+        console.log("Model input element:", modelIdInput);
+        console.log("Datalist element:", datalist);
+        console.log("List attribute on input:", modelIdInput.getAttribute('list'));
+        console.log("Datalist HTML:", datalist.outerHTML);
+        console.log("Datalist option count:", datalist.children.length);
+        
+        // 添加/确保更改事件以根据模型名称自动选择类别
         modelIdInput.addEventListener('input', function() {
             const modelValue = this.value.toLowerCase();
             if (modelValue.includes('pro')) {
                 modelCategorySelect.value = 'Pro';
-                // Hide custom quota div if it was visible
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
             } else if (modelValue.includes('flash')) {
                 modelCategorySelect.value = 'Flash';
-                // Hide custom quota div if it was visible
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
             }
-            // For other models, let user select the category
+        });
+        
+        // 添加点击监听，确保下拉列表正常工作
+        modelIdInput.addEventListener('click', function() {
+            console.log("Model input clicked, should show dropdown");
         });
     }
 
