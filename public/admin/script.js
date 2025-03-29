@@ -644,43 +644,53 @@ function hideError(container = errorMessageDiv) {
     function updateModelIdDropdown(models) {
         if (!modelIdInput) return;
         
-        // Create datalist if it doesn't exist
+        // 确保datalist元素存在并位于正确的位置
         let datalist = document.getElementById('model-suggestions');
         if (!datalist) {
+            // 如果找不到datalist，创建一个新的并添加到input元素的父元素中
             datalist = document.createElement('datalist');
             datalist.id = 'model-suggestions';
-            document.body.appendChild(datalist);
-        } else {
-            datalist.innerHTML = ''; // Clear existing options
+            // 将datalist添加到input元素的父元素中，而不是document.body
+            modelIdInput.parentNode.appendChild(datalist);
+            console.log('Created new datalist element');
         }
         
-        // Add model options to datalist
+        // 清空现有选项
+        datalist.innerHTML = '';
+        
+        // 添加模型选项到datalist
         models.forEach(model => {
             const option = document.createElement('option');
             option.value = model.id;
             datalist.appendChild(option);
         });
         
-        // Connect input to datalist if not already connected
-        if (!modelIdInput.getAttribute('list')) {
-            modelIdInput.setAttribute('list', 'model-suggestions');
-        }
+        console.log(`Added ${models.length} model options to datalist`);
         
-        // Add/ensure change event to auto-select category based on model name
+        // 确保input元素与datalist正确关联
+        modelIdInput.setAttribute('list', 'model-suggestions');
+        
+        // 添加/确保input事件以根据模型名称自动选择类别
         modelIdInput.addEventListener('input', function() {
             const modelValue = this.value.toLowerCase();
             if (modelValue.includes('pro')) {
                 modelCategorySelect.value = 'Pro';
-                // Hide custom quota div if it was visible
+                // 如果自定义配额div可见，则隐藏
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
             } else if (modelValue.includes('flash')) {
                 modelCategorySelect.value = 'Flash';
-                // Hide custom quota div if it was visible
+                // 如果自定义配额div可见，则隐藏
                 customQuotaDiv.classList.add('hidden');
                 modelQuotaInput.required = false;
             }
-            // For other models, let user select the category
+            // 对于其他模型，让用户选择类别
+        });
+        
+        // 添加点击事件，确保点击时显示下拉列表
+        modelIdInput.addEventListener('click', function() {
+            // 模拟输入事件以触发下拉列表显示
+            this.dispatchEvent(new Event('input'));
         });
     }
 
