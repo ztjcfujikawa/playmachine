@@ -971,8 +971,17 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 						const keyId = keyMeta.name.replace('key:', '');
 						const todayInLA = getTodayInLA();
 
-let modelUsageData: Record<string, { count: number; quota?: number }> = {};
+						let modelUsageData: Record<string, { count: number; quota?: number }> = {};
 						let categoryUsageData = { pro: 0, flash: 0 };
+
+						Object.entries(modelsConfig).forEach(([modelId, modelConfig]) => {
+							if (modelConfig.category === 'Custom') {
+								modelUsageData[modelId] = {
+									count: 0, 
+									quota: modelConfig.dailyQuota
+								};
+							}
+						});
 
 						if (keyInfoData.usageDate === todayInLA) {
 							if (keyInfoData.modelUsage) {
@@ -980,7 +989,7 @@ let modelUsageData: Record<string, { count: number; quota?: number }> = {};
 									if (modelsConfig[modelId]?.category === 'Custom') {
 										modelUsageData[modelId] = {
 											count: typeof count === 'number' ? count : 0,
-											quota: modelsConfig[modelId]?.dailyQuota // Get quota from model config
+											quota: modelsConfig[modelId]?.dailyQuota
 										};
 									}
 								});
