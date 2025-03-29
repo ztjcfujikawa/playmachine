@@ -835,6 +835,51 @@ async function handleV1Models(request: Request, env: Env, ctx: ExecutionContext)
 }
 
 // --- Admin API Handler ---
+async function handleAdminGeminiModels(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+
+  if (request.method !== 'GET') {
+    return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for gemini-models` }),
+      { status: 405, headers: { ...headers, 'Allow': 'GET' } });
+  }
+
+  // First check if there are any available Gemini API Keys
+  const selectedKey = await getNextAvailableGeminiKey(env, ctx);
+  if (!selectedKey) {
+    // No available keys, return empty array
+    return new Response(JSON.stringify([]), { headers });
+  }
+
+  // Use the available key to request Gemini models list
+  try {
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/models?key=${selectedKey.key}`;
+    const response = await fetch(geminiUrl, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (!response.ok) {
+      console.error(`Error fetching Gemini models: ${response.status} ${response.statusText}`);
+      return new Response(JSON.stringify([]), { headers });
+    }
+
+    const data = await response.json();
+    // Process response, remove "models/" prefix
+    const processedModels = data.data.map((model: any) => {
+      return {
+        id: model.id.replace('models/', ''),
+        object: model.object,
+        owned_by: model.owned_by
+      };
+    });
+
+    return new Response(JSON.stringify(processedModels), { headers });
+  } catch (error) {
+    console.error('Error fetching Gemini models:', error);
+    return new Response(JSON.stringify([]), { headers });
+  }
+}
+
 async function handleAdminApi(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 	const url = new URL(request.url);
 	const pathSegments = url.pathname.split('/').filter(Boolean); // e.g., ['api', 'admin', 'gemini-keys']
@@ -858,6 +903,8 @@ async function handleAdminApi(request: Request, env: Env, ctx: ExecutionContext)
 				return await handleAdminCategoryQuotas(request, env, ctx);
 			case 'test-gemini-key':
 				return await handleTestGeminiKey(request, env, ctx);
+			case 'gemini-models':
+				return await handleAdminGeminiModels(request, env, ctx);
 			default:
 				return new Response(JSON.stringify({ error: "Unknown admin resource" }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 		}

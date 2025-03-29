@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelCategorySelect = document.getElementById('model-category');
     const customQuotaDiv = document.getElementById('custom-quota-div');
     const modelQuotaInput = document.getElementById('model-quota');
+    const modelIdInput = document.getElementById('model-id');
     const setCategoryQuotasBtn = document.getElementById('set-category-quotas-btn');
     const categoryQuotasModal = document.getElementById('category-quotas-modal');
     const closeCategoryQuotasModalBtn = document.getElementById('close-category-quotas-modal');
@@ -36,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Global Cache ---
     let cachedModels = [];
+    let cachedGeminiModels = []; // Add cache for available Gemini models
     let cachedCategoryQuotas = { proQuota: 0, flashQuota: 0 };
 
     // --- Utility Functions ---
@@ -614,6 +616,74 @@ function hideError(container = errorMessageDiv) {
         return quotas;
     }
 
+    // New function to load available Gemini models
+    async function loadGeminiAvailableModels() {
+        // Only proceed if we have Gemini keys
+        const geminiKeysList = document.querySelectorAll('#gemini-keys-list .card-item');
+        if (geminiKeysList.length === 0) {
+            console.log("No Gemini keys available, skipping model list fetch");
+            return;
+        }
+        
+        try {
+            const models = await apiFetch('/gemini-models');
+            if (models && Array.isArray(models)) {
+                cachedGeminiModels = models;
+                
+                // Update the model-id input field to include dropdown
+                updateModelIdDropdown(models);
+                
+                console.log(`Loaded ${models.length} available Gemini models`);
+            }
+        } catch (error) {
+            console.error("Failed to load Gemini models:", error);
+        }
+    }
+
+    // Update the model-id input to include dropdown functionality
+    function updateModelIdDropdown(models) {
+        if (!modelIdInput) return;
+        
+        // Create datalist if it doesn't exist
+        let datalist = document.getElementById('model-suggestions');
+        if (!datalist) {
+            datalist = document.createElement('datalist');
+            datalist.id = 'model-suggestions';
+            document.body.appendChild(datalist);
+        } else {
+            datalist.innerHTML = ''; // Clear existing options
+        }
+        
+        // Add model options to datalist
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            datalist.appendChild(option);
+        });
+        
+        // Connect input to datalist if not already connected
+        if (!modelIdInput.getAttribute('list')) {
+            modelIdInput.setAttribute('list', 'model-suggestions');
+        }
+        
+        // Add/ensure change event to auto-select category based on model name
+        modelIdInput.addEventListener('input', function() {
+            const modelValue = this.value.toLowerCase();
+            if (modelValue.includes('pro')) {
+                modelCategorySelect.value = 'Pro';
+                // Hide custom quota div if it was visible
+                customQuotaDiv.classList.add('hidden');
+                modelQuotaInput.required = false;
+            } else if (modelValue.includes('flash')) {
+                modelCategorySelect.value = 'Flash';
+                // Hide custom quota div if it was visible
+                customQuotaDiv.classList.add('hidden');
+                modelQuotaInput.required = false;
+            }
+            // For other models, let user select the category
+        });
+    }
+
 
     // --- Event Handlers ---
 
@@ -950,6 +1020,8 @@ function hideError(container = errorMessageDiv) {
             }
 
             await loadGeminiKeys();
+            // After loading Gemini keys, try to load available Gemini models
+            await loadGeminiAvailableModels();
 
 
         } catch (error) {

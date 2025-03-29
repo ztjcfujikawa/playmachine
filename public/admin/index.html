@@ -304,7 +304,12 @@
                  <h3 class="text-lg font-medium">Add Model</h3>
                 <div>
                     <label for="model-id" class="block text-sm font-medium text-gray-700">Model ID</label>
-                    <input type="text" id="model-id" name="id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="e.g., gemini-1.5-flash-latest">
+                    <div class="relative">
+                        <input type="text" id="model-id" name="id" required list="model-suggestions" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="e.g., gemini-1.5-flash-latest">
+                        <datalist id="model-suggestions">
+                        </datalist>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">选择或输入模型名称，选择包含"pro"的模型会自动设置为Pro分类，选择包含"flash"的模型会自动设置为Flash分类</p>
                 </div>
                  <div>
                     <label for="model-category" class="block text-sm font-medium text-gray-700">Category</label>
