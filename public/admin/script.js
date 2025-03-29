@@ -649,7 +649,7 @@ function hideError(container = errorMessageDiv) {
         if (!datalist) {
             datalist = document.createElement('datalist');
             datalist.id = 'model-suggestions';
-            document.body.appendChild(datalist);
+            modelIdInput.parentElement.appendChild(datalist);
         } else {
             datalist.innerHTML = ''; // Clear existing options
         }
