@@ -852,10 +852,13 @@ async function handleAdminGeminiModels(request: Request, env: Env, ctx: Executio
 
   // Use the available key to request Gemini models list
   try {
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/models?key=${selectedKey.key}`;
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/models`;
     const response = await fetch(geminiUrl, {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${selectedKey.key}`
+      }
     });
 
     if (!response.ok) {
@@ -864,12 +867,12 @@ async function handleAdminGeminiModels(request: Request, env: Env, ctx: Executio
     }
 
     const data = await response.json();
-    // Process response, remove "models/" prefix
-    const processedModels = data.data.map((model: any) => {
+    // Process response
+    const processedModels = data.models.map((model: any) => {
       return {
-        id: model.id.replace('models/', ''),
-        object: model.object,
-        owned_by: model.owned_by
+        id: model.name.replace('models/', ''),
+        object: 'model',
+        owned_by: 'google'
       };
     });
 
