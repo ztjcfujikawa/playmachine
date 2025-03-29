@@ -971,7 +971,7 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 						const keyId = keyMeta.name.replace('key:', '');
 						const todayInLA = getTodayInLA();
 
-						let modelUsageData: Record<string, { count: number; quota?: number }> = {};
+let modelUsageData: Record<string, { count: number; quota?: number }> = {};
 						let categoryUsageData = { pro: 0, flash: 0 };
 
 						if (keyInfoData.usageDate === todayInLA) {
@@ -979,7 +979,7 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 								Object.entries(keyInfoData.modelUsage).forEach(([modelId, count]) => {
 									if (modelsConfig[modelId]?.category === 'Custom') {
 										modelUsageData[modelId] = {
-											count,
+											count: typeof count === 'number' ? count : 0,
 											quota: modelsConfig[modelId]?.dailyQuota // Get quota from model config
 										};
 									}
