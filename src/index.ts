@@ -852,27 +852,32 @@ async function handleAdminGeminiModels(request: Request, env: Env, ctx: Executio
 
   // Use the available key to request Gemini models list
   try {
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/openai/models`;
+    // Corrected URL and authentication method (using ?key= query parameter)
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${selectedKey.key}`;
     const response = await fetch(geminiUrl, {
       method: 'GET',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${selectedKey.key}`
+        // Removed Authorization header
       }
     });
 
     if (!response.ok) {
-      console.error(`Error fetching Gemini models: ${response.status} ${response.statusText}`);
+      const errorBody = await response.text();
+      console.error(`Error fetching Gemini models: ${response.status} ${response.statusText}`, errorBody);
+      // Return empty array on error, as before
       return new Response(JSON.stringify([]), { headers });
     }
 
     const data = await response.json();
-    // Process response
-    const processedModels = data.models.map((model: any) => {
+    // Process response - the structure is { models: [...] } as confirmed by user feedback
+    const processedModels = (data.models || []).map((model: any) => {
+      // Extract the model ID after "models/"
+      const modelId = model.name?.startsWith('models/') ? model.name.substring(7) : model.name;
       return {
-        id: model.name.replace('models/', ''),
+        id: modelId, // Use the extracted ID
         object: 'model',
-        owned_by: 'google'
+        owned_by: 'google' // Assuming all are Google models
       };
     });
 
