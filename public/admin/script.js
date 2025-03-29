@@ -644,54 +644,135 @@ function hideError(container = errorMessageDiv) {
     function updateModelIdDropdown(models) {
         if (!modelIdInput) return;
         
-        // 确保datalist元素存在并位于正确的位置
+        // 创建自定义下拉菜单
+        const createCustomDropdown = () => {
+            // 移除旧的下拉菜单（如果存在）
+            const existingDropdown = document.getElementById('custom-model-dropdown');
+            if (existingDropdown) {
+                existingDropdown.remove();
+            }
+            
+            // 创建新的下拉菜单容器
+            const dropdownContainer = document.createElement('div');
+            dropdownContainer.id = 'custom-model-dropdown';
+            dropdownContainer.className = 'absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base overflow-auto focus:outline-none sm:text-sm hidden';
+            dropdownContainer.style.maxHeight = '200px';
+            dropdownContainer.style.overflowY = 'auto';
+            dropdownContainer.style.border = '1px solid #d1d5db';
+            
+            // 添加模型选项到下拉菜单
+            models.forEach(model => {
+                const option = document.createElement('div');
+                option.className = 'cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-gray-100';
+                option.textContent = model.id;
+                option.dataset.value = model.id;
+                
+                option.addEventListener('click', () => {
+                    modelIdInput.value = model.id;
+                    dropdownContainer.classList.add('hidden');
+                    
+                    // 根据模型名称自动选择类别
+                    const modelValue = model.id.toLowerCase();
+                    if (modelValue.includes('pro')) {
+                        modelCategorySelect.value = 'Pro';
+                        customQuotaDiv.classList.add('hidden');
+                        modelQuotaInput.required = false;
+                    } else if (modelValue.includes('flash')) {
+                        modelCategorySelect.value = 'Flash';
+                        customQuotaDiv.classList.add('hidden');
+                        modelQuotaInput.required = false;
+                    }
+                    
+                    // 触发input事件以便其他监听器可以响应
+                    modelIdInput.dispatchEvent(new Event('input'));
+                });
+                
+                dropdownContainer.appendChild(option);
+            });
+            
+            // 将下拉菜单添加到input元素的父元素中
+            modelIdInput.parentNode.appendChild(dropdownContainer);
+            
+            return dropdownContainer;
+        };
+        
+        // 创建下拉菜单
+        const dropdown = createCustomDropdown();
+        console.log(`Created custom dropdown with ${models.length} model options`);
+        
+        // 添加input事件以根据模型名称自动选择类别和过滤下拉选项
+        modelIdInput.addEventListener('input', function() {
+            const modelValue = this.value.toLowerCase();
+            
+            // 根据输入值过滤下拉选项
+            const options = dropdown.querySelectorAll('div[data-value]');
+            let hasVisibleOptions = false;
+            
+            options.forEach(option => {
+                const optionValue = option.dataset.value.toLowerCase();
+                if (optionValue.includes(modelValue)) {
+                    option.style.display = 'block';
+                    hasVisibleOptions = true;
+                } else {
+                    option.style.display = 'none';
+                }
+            });
+            
+            // 如果有匹配的选项，显示下拉菜单
+            if (hasVisibleOptions && modelValue) {
+                dropdown.classList.remove('hidden');
+            } else {
+                dropdown.classList.add('hidden');
+            }
+            
+            // 根据输入值自动选择类别
+            if (modelValue.includes('pro')) {
+                modelCategorySelect.value = 'Pro';
+                customQuotaDiv.classList.add('hidden');
+                modelQuotaInput.required = false;
+            } else if (modelValue.includes('flash')) {
+                modelCategorySelect.value = 'Flash';
+                customQuotaDiv.classList.add('hidden');
+                modelQuotaInput.required = false;
+            }
+        });
+        
+        // 添加点击事件，显示下拉菜单
+        modelIdInput.addEventListener('click', function() {
+            if (models.length > 0) {
+                // 显示所有选项
+                const options = dropdown.querySelectorAll('div[data-value]');
+                options.forEach(option => {
+                    option.style.display = 'block';
+                });
+                
+                dropdown.classList.remove('hidden');
+            }
+        });
+        
+        // 点击页面其他地方时隐藏下拉菜单
+        document.addEventListener('click', function(e) {
+            if (e.target !== modelIdInput && !dropdown.contains(e.target)) {
+                dropdown.classList.add('hidden');
+            }
+        });
+        
+        // 保留原始的datalist作为备份
         let datalist = document.getElementById('model-suggestions');
         if (!datalist) {
-            // 如果找不到datalist，创建一个新的并添加到input元素的父元素中
             datalist = document.createElement('datalist');
             datalist.id = 'model-suggestions';
-            // 将datalist添加到input元素的父元素中，而不是document.body
             modelIdInput.parentNode.appendChild(datalist);
-            console.log('Created new datalist element');
         }
         
-        // 清空现有选项
         datalist.innerHTML = '';
-        
-        // 添加模型选项到datalist
         models.forEach(model => {
             const option = document.createElement('option');
             option.value = model.id;
             datalist.appendChild(option);
         });
         
-        console.log(`Added ${models.length} model options to datalist`);
-        
-        // 确保input元素与datalist正确关联
         modelIdInput.setAttribute('list', 'model-suggestions');
-        
-        // 添加/确保input事件以根据模型名称自动选择类别
-        modelIdInput.addEventListener('input', function() {
-            const modelValue = this.value.toLowerCase();
-            if (modelValue.includes('pro')) {
-                modelCategorySelect.value = 'Pro';
-                // 如果自定义配额div可见，则隐藏
-                customQuotaDiv.classList.add('hidden');
-                modelQuotaInput.required = false;
-            } else if (modelValue.includes('flash')) {
-                modelCategorySelect.value = 'Flash';
-                // 如果自定义配额div可见，则隐藏
-                customQuotaDiv.classList.add('hidden');
-                modelQuotaInput.required = false;
-            }
-            // 对于其他模型，让用户选择类别
-        });
-        
-        // 添加点击事件，确保点击时显示下拉列表
-        modelIdInput.addEventListener('click', function() {
-            // 模拟输入事件以触发下拉列表显示
-            this.dispatchEvent(new Event('input'));
-        });
     }
 
 
