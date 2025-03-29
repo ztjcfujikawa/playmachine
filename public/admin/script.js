@@ -644,15 +644,15 @@ function hideError(container = errorMessageDiv) {
     function updateModelIdDropdown(models) {
         if (!modelIdInput) return;
         
-        // 创建自定义下拉菜单
+        // Create custom dropdown menu
         const createCustomDropdown = () => {
-            // 移除旧的下拉菜单（如果存在）
+            // Remove old dropdown menu (if it exists)
             const existingDropdown = document.getElementById('custom-model-dropdown');
             if (existingDropdown) {
                 existingDropdown.remove();
             }
             
-            // 创建新的下拉菜单容器
+            // Create new dropdown menu container
             const dropdownContainer = document.createElement('div');
             dropdownContainer.id = 'custom-model-dropdown';
             dropdownContainer.className = 'absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base overflow-auto focus:outline-none sm:text-sm hidden';
@@ -660,7 +660,7 @@ function hideError(container = errorMessageDiv) {
             dropdownContainer.style.overflowY = 'auto';
             dropdownContainer.style.border = '1px solid #d1d5db';
             
-            // 添加模型选项到下拉菜单
+            // Add model options to the dropdown menu
             models.forEach(model => {
                 const option = document.createElement('div');
                 option.className = 'cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-gray-100';
@@ -671,7 +671,7 @@ function hideError(container = errorMessageDiv) {
                     modelIdInput.value = model.id;
                     dropdownContainer.classList.add('hidden');
                     
-                    // 根据模型名称自动选择类别
+                    // Automatically select category based on model name
                     const modelValue = model.id.toLowerCase();
                     if (modelValue.includes('pro')) {
                         modelCategorySelect.value = 'Pro';
@@ -683,28 +683,28 @@ function hideError(container = errorMessageDiv) {
                         modelQuotaInput.required = false;
                     }
                     
-                    // 触发input事件以便其他监听器可以响应
+                    // Trigger input event so other listeners can respond
                     modelIdInput.dispatchEvent(new Event('input'));
                 });
                 
                 dropdownContainer.appendChild(option);
             });
             
-            // 将下拉菜单添加到input元素的父元素中
+            // Add the dropdown menu to the input element's parent
             modelIdInput.parentNode.appendChild(dropdownContainer);
             
             return dropdownContainer;
         };
         
-        // 创建下拉菜单
+        // Create dropdown menu
         const dropdown = createCustomDropdown();
         console.log(`Created custom dropdown with ${models.length} model options`);
         
-        // 添加input事件以根据模型名称自动选择类别和过滤下拉选项
+        // Add input event to automatically select category based on model name and filter dropdown options
         modelIdInput.addEventListener('input', function() {
             const modelValue = this.value.toLowerCase();
             
-            // 根据输入值过滤下拉选项
+            // Filter dropdown options based on input value
             const options = dropdown.querySelectorAll('div[data-value]');
             let hasVisibleOptions = false;
             
@@ -718,14 +718,14 @@ function hideError(container = errorMessageDiv) {
                 }
             });
             
-            // 如果有匹配的选项，显示下拉菜单
+            // If there are matching options, show the dropdown menu
             if (hasVisibleOptions && modelValue) {
                 dropdown.classList.remove('hidden');
             } else {
                 dropdown.classList.add('hidden');
             }
             
-            // 根据输入值自动选择类别
+            // Automatically select category based on input value
             if (modelValue.includes('pro')) {
                 modelCategorySelect.value = 'Pro';
                 customQuotaDiv.classList.add('hidden');
@@ -737,10 +737,10 @@ function hideError(container = errorMessageDiv) {
             }
         });
         
-        // 添加点击事件，显示下拉菜单
+        // Add click event to show the dropdown menu
         modelIdInput.addEventListener('click', function() {
             if (models.length > 0) {
-                // 显示所有选项
+                // Show all options
                 const options = dropdown.querySelectorAll('div[data-value]');
                 options.forEach(option => {
                     option.style.display = 'block';
@@ -750,14 +750,14 @@ function hideError(container = errorMessageDiv) {
             }
         });
         
-        // 点击页面其他地方时隐藏下拉菜单
+        // Hide dropdown menu when clicking elsewhere on the page
         document.addEventListener('click', function(e) {
             if (e.target !== modelIdInput && !dropdown.contains(e.target)) {
                 dropdown.classList.add('hidden');
             }
         });
         
-        // 保留原始的datalist作为备份
+        // Keep the original datalist as a backup
         let datalist = document.getElementById('model-suggestions');
         if (!datalist) {
             datalist = document.createElement('datalist');
