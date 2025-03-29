@@ -6,7 +6,7 @@
     <title>Gemini Proxy Panel</title>
     <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css"> 
     <style>
         /* Simple loading spinner */
         .loader {
@@ -30,24 +30,28 @@
             transform: rotate(-90deg);
             transform-origin: 50% 50%;
         }
-        /* Dark mode styles */
+        
         body[data-theme="dark"] {
             background-color: #1a202c !important;
             color: #e2e8f0 !important;
         }
+        
         body[data-theme="dark"] .container,
         body[data-theme="dark"] #main-content {
             background-color: #1a202c !important;
         }
+        
         body[data-theme="dark"] .bg-white,
         body[data-theme="dark"] section,
         body[data-theme="dark"] .modal-content,
         body[data-theme="dark"] .card-item {
             background-color: #2d3748 !important;
         }
+        
         body[data-theme="dark"] .bg-gray-100 {
             background-color: #1a202c !important;
         }
+        
         body[data-theme="dark"] .text-gray-700,
         body[data-theme="dark"] .text-gray-800,
         body[data-theme="dark"] .text-gray-900,
@@ -57,111 +61,116 @@
         body[data-theme="dark"] h3 {
             color: #e2e8f0 !important;
         }
+        
         body[data-theme="dark"] .text-gray-500,
         body[data-theme="dark"] .text-gray-600 {
             color: #a0aec0 !important;
         }
+        
         body[data-theme="dark"] .border,
         body[data-theme="dark"] input,
         body[data-theme="dark"] select,
         body[data-theme="dark"] textarea {
             border-color: #4a5568 !important;
         }
+        
         body[data-theme="dark"] input,
         body[data-theme="dark"] select,
         body[data-theme="dark"] textarea {
             background-color: #2d3748 !important;
             color: #e2e8f0 !important;
         }
+        
         body[data-theme="dark"] .bg-gray-200,
         body[data-theme="dark"] .bg-gray-300 {
             background-color: #4a5568 !important;
         }
+        
         body[data-theme="dark"] .hover\:bg-gray-300:hover {
             background-color: #2d3748 !important;
         }
+        
         body[data-theme="dark"] .bg-indigo-600 {
             background-color: #4c51bf !important;
         }
+        
         body[data-theme="dark"] .hover\:bg-indigo-700:hover {
             background-color: #434190 !important;
         }
+        
         body[data-theme="dark"] .text-indigo-600 {
             color: #7f9cf5 !important;
         }
+        
         body[data-theme="dark"] .hover\:text-indigo-800:hover {
             color: #6b46c1 !important;
         }
+        
         body[data-theme="dark"] .bg-blue-50,
         body[data-theme="dark"] .bg-blue-100 {
             background-color: #2c5282 !important;
         }
+        
         body[data-theme="dark"] .text-blue-800 {
             color: #bee3f8 !important;
         }
+        
         body[data-theme="dark"] .text-xs.px-2.py-1.bg-blue-100.text-blue-800.rounded-full {
-            background-color: #3182ce !important;
-            color: #ffffff !important;
+            background-color: #3182ce !important; 
+            color: #ffffff !important; 
         }
+        
         body[data-theme="dark"] .p-4.border.rounded-md.bg-white {
             background-color: #2d3748 !important;
         }
+        
         body[data-theme="dark"] .text-gray-900 {
             color: #e2e8f0 !important;
         }
+        
         body[data-theme="dark"] .focus\:border-indigo-500:focus,
         body[data-theme="dark"] .focus\:ring-indigo-500:focus {
             border-color: #7f9cf5 !important;
             box-shadow: 0 0 0 1px #7f9cf5 !important;
         }
+        
         body[data-theme="dark"] .toggle-label {
             background-color: #4a5568 !important;
         }
+        
         body[data-theme="dark"] .toggle-checkbox:checked + .toggle-label {
             background-color: #68D391 !important;
         }
+        
         body[data-theme="dark"] .toggle-checkbox {
             border-color: #4a5568 !important;
         }
+        
         body[data-theme="dark"] .toggle-checkbox:checked {
             border-color: #68D391 !important;
         }
+        
         body[data-theme="dark"] label[for^="safety-toggle"] {
             color: #e2e8f0 !important;
         }
+        
         body[data-theme="dark"] .text-green-600 {
             color: #68D391 !important;
         }
+        
         body[data-theme="dark"] .text-red-600 {
             color: #F56565 !important;
         }
+        
         .toggle-label + span {
             margin-left: 8px !important;
-        }
-        /* Add this to your style section in index.html */
-        datalist {
-            display: none; /* This is normal - browser handles showing options */
-        }
-        input[list]::-webkit-calendar-picker-indicator {
-            display: inline-block; /* Show dropdown indicator on Chrome */
-            opacity: 0.6;
-        }
-        /* Highlight input with datalist to indicate dropdown available */
-        input[list] {
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 0.5rem center;
-            background-size: 1rem;
-            padding-right: 2rem;
-        }
-        body[data-theme="dark"] input[list] {
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e2e8f0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
         }
     </style>
     <script>
         (function() {
             try {
                 const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+
                 if (!isLoggedIn) {
                     window.location.href = '/login';
                 }
@@ -296,7 +305,7 @@
                 <div>
                     <label for="model-id" class="block text-sm font-medium text-gray-700">Model ID</label>
                     <div class="relative">
-                        <input type="text" id="model-id" name="id" required list="model-suggestions" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="Click to select a model or type...">
+                        <input type="text" id="model-id" name="id" required list="model-suggestions" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="e.g., gemini-1.5-flash-latest">
                         <datalist id="model-suggestions">
                         </datalist>
                     </div>
@@ -321,6 +330,7 @@
             </form>
         </section>
     </div>
+
     <!-- Set Category Quotas Modal -->
     <div id="category-quotas-modal" class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 hidden">
         <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 modal-content">
@@ -355,6 +365,7 @@
             <div id="category-quotas-error" class="text-red-500 text-sm mt-2 hidden"></div>
         </div>
     </div>
+
     <script src="script.js"></script>
 </body>
 </html>
