@@ -47,6 +47,21 @@ interface GeminiKeyInfo {
 	name?: string;
 }
 
+/**
+ * Helper function to get today's date in Los Angeles timezone (YYYY-MM-DD format)
+ * Uses a more reliable method for timezone conversion
+ */
+function getTodayInLA(): string {
+	// Get current date in Los Angeles timezone
+	const date = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+	// Parse the date string into a Date object
+	const laDate = new Date(date);
+	// Format as YYYY-MM-DD
+	return laDate.getFullYear() + '-' + 
+		String(laDate.getMonth() + 1).padStart(2, '0') + '-' + 
+		String(laDate.getDate()).padStart(2, '0');
+}
+
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -523,7 +538,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 		return new Response(JSON.stringify({ error: "No available Gemini API Key configured." }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 	}
 
-	// --- New Quota Check Logic ---
+	// --- Improved Quota Check Logic ---
 	const modelsConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Record<string, ModelConfig> | null;
 	const categoryQuotasConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json") as CategoryQuotas | null;
 
@@ -545,12 +560,14 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 		}
 	}
 
-	const today = new Date().toISOString().split('T')[0];
+	// Get today's date in Los Angeles timezone for consistent quota check
+	const todayInLA = getTodayInLA();
+	
 	let quotaExceeded = false;
 	let quotaLimit = Infinity;
 	let currentUsage = 0;
 
-	if (keyInfoData.usageDate !== today) {
+	if (keyInfoData.usageDate !== todayInLA) {
 		// Usage resets today, so quota cannot be exceeded yet
 		quotaExceeded = false;
 	} else {
@@ -943,12 +960,12 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 					try {
 						const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 						const keyId = keyMeta.name.replace('key:', '');
-						const today = new Date().toISOString().split('T')[0];
+						const todayInLA = getTodayInLA();
 
 						let modelUsageData: Record<string, { count: number; quota?: number }> = {};
 						let categoryUsageData = { pro: 0, flash: 0 };
 
-						if (keyInfoData.usageDate === today) {
+						if (keyInfoData.usageDate === todayInLA) {
 							if (keyInfoData.modelUsage) {
 								Object.entries(keyInfoData.modelUsage).forEach(([modelId, count]) => {
 									if (modelsConfig[modelId]?.category === 'Custom') {
@@ -966,7 +983,7 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 							id: keyId,
 							name: keyInfoData.name || keyId,
 							keyPreview: `...${(keyInfoData.key || '').slice(-4)}`,
-							usage: keyInfoData.usageDate === today ? (keyInfoData.usage || 0) : 0,
+							usage: keyInfoData.usageDate === todayInLA ? (keyInfoData.usage || 0) : 0,
 							usageDate: keyInfoData.usageDate || 'N/A',
 							modelUsage: modelUsageData, 
 							categoryUsage: categoryUsageData,
@@ -1647,7 +1664,7 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext): Promi
 /**
  * Increments the usage count for a given Gemini Key ID in KV.
  * Resets the count if the date has changed.
- * Tracks usage per model and per category (Pro/Flash).
+ * Tracks usage per model and per category (Pro/Flash/Custom).
  */
 async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, category?: 'Pro' | 'Flash' | 'Custom'): Promise<void> {
 	const keyKvName = `key:${keyId}`;
@@ -1660,14 +1677,9 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 
 		// IMPORTANT: Parse the JSON string from KV
 		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
-		// Get current date in Mountain View, CA (America/Los_Angeles) timezone
-		const nowInMV = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
-		const dateObjInMV = new Date(nowInMV);
-		const year = dateObjInMV.getFullYear();
-		const month = (dateObjInMV.getMonth() + 1).toString().padStart(2, '0');
-		const day = dateObjInMV.getDate().toString().padStart(2, '0');
-		const todayInMV = `${year}-${month}-${day}`;
-
+		
+		// Use consistent helper function for date handling
+		const todayInLA = getTodayInLA();
 
 		// Ensure usage fields exist, providing defaults
 		let currentTotalUsage = keyInfoData.usage || 0;
@@ -1675,22 +1687,26 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 		let modelUsage = keyInfoData.modelUsage || {};
 		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
 
-		// Reset all usage counters for new day based on Mountain View time
-		if (usageDate !== todayInMV) {
-			currentTotalUsage = 1;
-			usageDate = todayInMV; // Use the Mountain View date
+		// Reset all usage counters for new day based on Los Angeles time
+		if (usageDate !== todayInLA) {
+			console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage counters.`);
+			currentTotalUsage = 1; // Start with 1 for this request
+			usageDate = todayInLA;
 			modelUsage = {};
 			categoryUsage = { pro: 0, flash: 0 };
 
-			// Initialize counts for the current request
+			// Always record the current request in both model and category tracking
 			if (modelId) {
 				modelUsage[modelId] = 1;
 			}
+			
+			// Update the appropriate category counter
 			if (category === 'Pro') {
 				categoryUsage.pro = 1;
 			} else if (category === 'Flash') {
 				categoryUsage.flash = 1;
 			}
+			// Custom category models are tracked in modelUsage
 		} else {
 			// Same day, just increment counters
 			currentTotalUsage += 1;
@@ -1699,12 +1715,14 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 			if (modelId) {
 				modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
 			}
-			// Update category-specific usage if category is Pro or Flash
+			
+			// Update category-specific usage based on category
 			if (category === 'Pro') {
 				categoryUsage.pro = (categoryUsage.pro || 0) + 1;
 			} else if (category === 'Flash') {
 				categoryUsage.flash = (categoryUsage.flash || 0) + 1;
 			}
+			// Custom category models are tracked in modelUsage
 		}
 
 		// Create the updated object to store, preserving existing fields
@@ -1718,16 +1736,17 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 
 		// Put the updated info back into KV
 		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
-		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}`);
+		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}`);
 
 	} catch (e) {
 		console.error(`Failed to increment usage for key ${keyId}:`, e);
+		throw e; // Rethrow to allow proper error handling by caller
 	}
 }
 
 
 /**
- * Forces the usage count for a specific category/model on a key to its configured daily limit for the current day (Mountain View time).
+ * Forces the usage count for a specific category/model on a key to its configured daily limit for the current day.
  * This is typically called when a 429 error is received from the upstream API.
  */
 async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string): Promise<void> {
@@ -1749,22 +1768,18 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 		const modelsConfig: Record<string, ModelConfig> = (modelsConfigJson as Record<string, ModelConfig>) || {};
 		const categoryQuotas: CategoryQuotas = (categoryQuotasJson as CategoryQuotas) || { proQuota: Infinity, flashQuota: Infinity };
 
-		// Get current date in Mountain View, CA
-		const nowInMV = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
-		const dateObjInMV = new Date(nowInMV);
-		const year = dateObjInMV.getFullYear();
-		const month = (dateObjInMV.getMonth() + 1).toString().padStart(2, '0');
-		const day = dateObjInMV.getDate().toString().padStart(2, '0');
-		const todayInMV = `${year}-${month}-${day}`;
+		// Use consistent helper function for date handling
+		const todayInLA = getTodayInLA();
 
 		// Ensure usage fields exist
 		let usageDate = keyInfoData.usageDate || '';
 		let modelUsage = keyInfoData.modelUsage || {};
 		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
 
-		// If the usageDate is not today (MV time), reset everything first
-		if (usageDate !== todayInMV) {
-			usageDate = todayInMV;
+		// If the usageDate is not today, reset everything first
+		if (usageDate !== todayInLA) {
+			console.log(`Date change detected in forceSetQuotaToLimit for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage counters.`);
+			usageDate = todayInLA;
 			modelUsage = {};
 			categoryUsage = { pro: 0, flash: 0 };
 			// Don't reset total usage here, as it wasn't necessarily 0 before
@@ -1806,7 +1821,7 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 
 		// Save back to KV
 		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
-		console.log(`Key ${keyId} quota forced to limit for category ${category}${category === 'Custom' ? ` (model ${modelId})` : ''} for date ${todayInMV}.`);
+		console.log(`Key ${keyId} quota forced to limit for category ${category}${category === 'Custom' ? ` (model ${modelId})` : ''} for date ${todayInLA}.`);
 
 	} catch (e) {
 		console.error(`Failed to force quota limit for key ${keyId}:`, e);
