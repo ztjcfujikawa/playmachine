@@ -184,6 +184,62 @@
         body[data-theme="dark"] .delete-model:hover {
             color: #fecaca !important; /* Even lighter red/pink on hover */
         }
+
+        /* Dark mode adjustments for text-based delete buttons */
+        body[data-theme="dark"] .delete-worker-key,
+        body[data-theme="dark"] .delete-gemini-key { /* .delete-model already covered above */
+            color: #fbb6ce !important; /* Lighter red/pink */
+        }
+        body[data-theme="dark"] .delete-worker-key:hover,
+        body[data-theme="dark"] .delete-gemini-key:hover { /* .delete-model already covered above */
+            color: #fecaca !important; /* Even lighter red/pink on hover */
+        }
+
+        /* Dark mode adjustments for text-based action buttons */
+        body[data-theme="dark"] .test-gemini-key { /* .set-individual-quota already covered above */
+             color: #90cdf4 !important; /* Lighter blue */
+        }
+        body[data-theme="dark"] .test-gemini-key:hover { /* .set-individual-quota already covered above */
+             color: #bee3f8 !important; /* Even lighter blue on hover */
+        }
+
+        /* Adjust Generate Worker Key button (text-based) */
+        body[data-theme="dark"] #generate-worker-key {
+            color: #a3bffa !important; /* Lighter indigo */
+        }
+        body[data-theme="dark"] #generate-worker-key:hover {
+            color: #c3dafe !important; /* Even lighter indigo */
+        }
+
+        /* Adjust Set Category Quotas button (background) */
+        body[data-theme="dark"] #set-category-quotas-btn {
+            background-color: #4299e1 !important; /* Brighter blue */
+            color: #ffffff !important;
+        }
+        body[data-theme="dark"] #set-category-quotas-btn:hover {
+            background-color: #63b3ed !important; /* Lighter blue on hover */
+        }
+
+        /* Adjust Run Test button (background) */
+        body[data-theme="dark"] .run-test-btn {
+            background-color: #48bb78 !important; /* Brighter green */
+            color: #ffffff !important;
+        }
+        body[data-theme="dark"] .run-test-btn:hover {
+            background-color: #68d391 !important; /* Lighter green on hover */
+        }
+
+        /* Adjust Modal Cancel buttons (background) */
+        body[data-theme="dark"] #cancel-category-quotas,
+        body[data-theme="dark"] #cancel-individual-quota {
+            background-color: #4a5568 !important; /* Darker gray background */
+            color: #e2e8f0 !important; /* Light text */
+            border-color: #718096 !important; /* Gray border */
+        }
+        body[data-theme="dark"] #cancel-category-quotas:hover,
+        body[data-theme="dark"] #cancel-individual-quota:hover {
+            background-color: #718096 !important; /* Lighter gray background on hover */
+        }
     </style>
     <script>
         (function() {
