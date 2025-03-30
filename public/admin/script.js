@@ -658,7 +658,7 @@ function hideError(container = errorMessageDiv) {
                 actionsHtml = `
                     <button data-id="${model.id}" data-category="${model.category}" data-quota="${model.individualQuota || 0}" 
                         class="set-individual-quota mr-2 text-blue-500 hover:text-blue-700 font-medium">
-                        Set Individual Quota
+                        Set Quota
                     </button>
                 `;
             }
