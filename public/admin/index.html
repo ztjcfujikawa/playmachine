@@ -170,6 +170,20 @@
         .toggle-label + span {
             margin-left: 8px !important;
         }
+
+        /* Dark mode button adjustments for Managed Models */
+        body[data-theme="dark"] .set-individual-quota {
+            color: #90cdf4 !important; /* Lighter blue */
+        }
+        body[data-theme="dark"] .set-individual-quota:hover {
+            color: #bee3f8 !important; /* Even lighter blue on hover */
+        }
+        body[data-theme="dark"] .delete-model {
+            color: #fbb6ce !important; /* Lighter red/pink */
+        }
+        body[data-theme="dark"] .delete-model:hover {
+            color: #fecaca !important; /* Even lighter red/pink on hover */
+        }
     </style>
     <script>
         (function() {
