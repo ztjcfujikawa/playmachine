@@ -28,6 +28,7 @@ const KV_KEY_GEMINI_KEY_INDEX = "_config:key_index";
 interface ModelConfig {
 	category: 'Pro' | 'Flash' | 'Custom';
 	dailyQuota?: number; // Only applicable for 'Custom' category
+	individualQuota?: number; // Individual quota for Pro/Flash models
 }
 
 // Define the structure for category quotas
@@ -594,23 +595,44 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 		// Check quota based on category
 		switch (modelCategory) {
 			case 'Pro':
+				// First check category quota
 				quotaLimit = categoryQuotasConfig?.proQuota ?? Infinity;
 				currentUsage = keyInfoData.categoryUsage?.pro ?? 0;
 				if (currentUsage >= quotaLimit) {
 					quotaExceeded = true;
 					console.warn(`Key ${selectedKey.id} Pro category usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
+				} 
+				// If category quota is fine, also check individual quota if set
+				else if (modelInfo.individualQuota) {
+					const individualQuota = modelInfo.individualQuota;
+					const modelSpecificUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
+					if (modelSpecificUsage >= individualQuota) {
+						quotaExceeded = true;
+						console.warn(`Key ${selectedKey.id} Pro model '${requestedModelId}' individual quota usage (${modelSpecificUsage}) meets or exceeds individual quota (${individualQuota}).`);
+					}
 				}
 				break;
 			case 'Flash':
+				// First check category quota
 				quotaLimit = categoryQuotasConfig?.flashQuota ?? Infinity;
 				currentUsage = keyInfoData.categoryUsage?.flash ?? 0;
 				if (currentUsage >= quotaLimit) {
 					quotaExceeded = true;
 					console.warn(`Key ${selectedKey.id} Flash category usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
+				} 
+				// If category quota is fine, also check individual quota if set
+				else if (modelInfo.individualQuota) {
+					const individualQuota = modelInfo.individualQuota;
+					const modelSpecificUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
+					if (modelSpecificUsage >= individualQuota) {
+						quotaExceeded = true;
+						console.warn(`Key ${selectedKey.id} Flash model '${requestedModelId}' individual quota usage (${modelSpecificUsage}) meets or exceeds individual quota (${individualQuota}).`);
+					}
 				}
 				break;
 			case 'Custom':
-				quotaLimit = modelInfo.dailyQuota ?? Infinity; // Use model-specific quota
+				// Custom models don't use individual quota
+				quotaLimit = modelInfo.dailyQuota ?? Infinity;
 				currentUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
 				if (currentUsage >= quotaLimit) {
 					quotaExceeded = true;
@@ -1326,14 +1348,21 @@ async function handleAdminModels(request: Request, env: Env, ctx: ExecutionConte
 				const modelList = Object.entries(modelsConfig).map(([id, data]) => ({
 					id: id,
 					category: data.category,
-					dailyQuota: data.dailyQuota
+					dailyQuota: data.dailyQuota,
+					individualQuota: data.individualQuota
 				}));
 				return new Response(JSON.stringify(modelList), { headers });
 			}
 
 			case 'POST': {
 				// Add or update a model with category
-				const body = await readRequestBody<{ id: string; category: 'Pro' | 'Flash' | 'Custom'; dailyQuota?: number | string }>(request);
+				const body = await readRequestBody<{ 
+					id: string; 
+					category: 'Pro' | 'Flash' | 'Custom'; 
+					dailyQuota?: number | string;
+					individualQuota?: number;
+				}>(request);
+				
 				if (!body || typeof body.id !== 'string' || body.id.trim() === '') {
 					return new Response(JSON.stringify({ error: 'Request body must include a valid non-empty string: id' }), { status: 400, headers });
 				}
@@ -1343,6 +1372,7 @@ async function handleAdminModels(request: Request, env: Env, ctx: ExecutionConte
 				const modelId = body.id.trim();
 				const category = body.category;
 
+				// Process the dailyQuota (mainly for Custom models)
 				let newQuota: number | undefined = undefined;
 				if (category === 'Custom') {
 					if (body.dailyQuota !== undefined && body.dailyQuota !== null && body.dailyQuota !== '') {
@@ -1358,15 +1388,36 @@ async function handleAdminModels(request: Request, env: Env, ctx: ExecutionConte
 							}
 						}
 					}
-				} else {
-					newQuota = undefined;
 				}
 
-				const isUpdate = modelsConfig.hasOwnProperty(modelId);
-				modelsConfig[modelId] = { category: category, dailyQuota: newQuota };
+				// Process the individualQuota (for Pro and Flash models)
+				let individualQuota: number | undefined = undefined;
+				if ((category === 'Pro' || category === 'Flash') && body.individualQuota !== undefined) {
+					if (typeof body.individualQuota === 'number' && body.individualQuota > 0) {
+						individualQuota = body.individualQuota;
+					}
+				}
 
+				// Check if this is an update or a new model
+				const isUpdate = modelsConfig.hasOwnProperty(modelId);
+				
+				// Create or update the model
+				modelsConfig[modelId] = { 
+					category: category, 
+					dailyQuota: newQuota, 
+					individualQuota: individualQuota 
+				};
+
+				// Save to KV store
 				await env.WORKER_CONFIG_KV.put(KV_KEY_MODELS, JSON.stringify(modelsConfig));
-				return new Response(JSON.stringify({ success: true, id: modelId, category: category, dailyQuota: newQuota }), { status: isUpdate ? 200 : 201, headers });
+				
+				return new Response(JSON.stringify({ 
+					success: true, 
+					id: modelId, 
+					category: category, 
+					dailyQuota: newQuota,
+					individualQuota: individualQuota 
+				}), { status: isUpdate ? 200 : 201, headers });
 			}
 
 			case 'DELETE': {

@@ -30,6 +30,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const proQuotaInput = document.getElementById('pro-quota');
     const flashQuotaInput = document.getElementById('flash-quota');
     const categoryQuotasErrorDiv = document.getElementById('category-quotas-error');
+    // Individual Quota Elements
+    const individualQuotaModal = document.getElementById('individual-quota-modal');
+    const closeIndividualQuotaModalBtn = document.getElementById('close-individual-quota-modal');
+    const cancelIndividualQuotaBtn = document.getElementById('cancel-individual-quota');
+    const individualQuotaForm = document.getElementById('individual-quota-form');
+    const individualQuotaModelIdInput = document.getElementById('individual-quota-model-id');
+    const individualQuotaValueInput = document.getElementById('individual-quota-value');
+    const individualQuotaErrorDiv = document.getElementById('individual-quota-error');
     const logoutButton = document.getElementById('logout-button');
     const darkModeToggle = document.getElementById('dark-mode-toggle');
     const sunIcon = document.getElementById('sun-icon');
@@ -322,6 +330,50 @@ function hideError(container = errorMessageDiv) {
                     </div>
             `;
 
+            // Individual Quota Models Section (Only for Pro/Flash models with individual quotas)
+            const individualQuotaModels = cachedModels.filter(model => 
+                (model.category === 'Pro' || model.category === 'Flash') && 
+                model.individualQuota && 
+                key.modelUsage && 
+                key.modelUsage[model.id] !== undefined
+            );
+
+            if (individualQuotaModels.length > 0) {
+                modalHTML += `
+                    <div class="border-t border-gray-200 pt-4 mb-4">
+                        <h3 class="text-lg font-medium text-gray-800 mb-3">${individualQuotaModels[0].category === 'Pro' ? 'Pro' : 'Flash'} Models with Individual Quota</h3>
+                        <div class="space-y-4">
+                `;
+
+                individualQuotaModels.forEach(model => {
+                    const modelId = model.id;
+                    const count = key.modelUsage?.[modelId] || 0;
+                    const quota = model.individualQuota;
+                    const quotaDisplay = formatQuota(quota);
+                    const remaining = quota === Infinity ? Infinity : Math.max(0, quota - count);
+                    const remainingDisplay = formatQuota(remaining);
+                    const remainingPercentage = calculateRemainingPercentage(count, quota);
+                    const progressColor = getProgressColor(remainingPercentage);
+
+                    modalHTML += `
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span class="text-sm font-medium text-gray-700">${modelId}</span>
+                                <span class="text-sm font-medium text-gray-700">${remainingDisplay}/${quotaDisplay}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                                <div class="${progressColor} h-2.5 rounded-full" style="width: ${remainingPercentage}%"></div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                modalHTML += `
+                        </div>
+                    </div>
+                `;
+            }
+
             // Custom Model Usage Section (Only if there are custom models used by this key)
             const customModelUsageEntries = Object.entries(key.modelUsage || {})
                 .filter(([modelId, usageData]) => {
@@ -560,19 +612,54 @@ function hideError(container = errorMessageDiv) {
         models.forEach(model => {
             const item = document.createElement('div');
             item.className = 'p-3 border rounded-md flex items-center justify-between';
+            
             let quotaDisplay = model.category;
             if (model.category === 'Custom') {
                 quotaDisplay += ` (Quota: ${model.dailyQuota === undefined ? 'Unlimited' : model.dailyQuota})`;
+            } else if (model.individualQuota) {
+                // Show individual quota if it exists for Pro/Flash models
+                quotaDisplay += ` (Individual Quota: ${model.individualQuota})`;
             }
+
+            let actionsHtml = '';
+            // Only show Set Individual Quota button for Pro and Flash models
+            if (model.category === 'Pro' || model.category === 'Flash') {
+                actionsHtml = `
+                    <button data-id="${model.id}" data-category="${model.category}" data-quota="${model.individualQuota || 0}" 
+                        class="set-individual-quota mr-2 text-blue-500 hover:text-blue-700 font-medium">
+                        Set Individual Quota
+                    </button>
+                `;
+            }
+            actionsHtml += `<button data-id="${model.id}" class="delete-model text-red-500 hover:text-red-700 font-medium">Delete</button>`;
 
             item.innerHTML = `
                 <div>
                     <p class="font-semibold text-gray-800">${model.id}</p>
                     <p class="text-xs text-gray-500">${quotaDisplay}</p>
                 </div>
-                <button data-id="${model.id}" class="delete-model text-red-500 hover:text-red-700 font-medium">Delete</button>
+                <div class="flex items-center">
+                    ${actionsHtml}
+                </div>
             `;
             modelsListDiv.appendChild(item);
+        });
+
+        // Add event listeners for individual quota buttons
+        document.querySelectorAll('.set-individual-quota').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const modelId = e.target.dataset.id;
+                const category = e.target.dataset.category;
+                const currentQuota = parseInt(e.target.dataset.quota, 10);
+                
+                // Set the form values
+                individualQuotaModelIdInput.value = modelId;
+                individualQuotaValueInput.value = currentQuota || 0;
+                
+                // Show the modal
+                hideError(individualQuotaErrorDiv);
+                individualQuotaModal.classList.remove('hidden');
+            });
         });
     }
 
@@ -1028,6 +1115,72 @@ function hideError(container = errorMessageDiv) {
         } else {
             // Error already shown by apiFetch
              showError(result?.error || "Failed to save category quotas.", categoryQuotasErrorDiv, categoryQuotasErrorDiv);
+        }
+    });
+
+    // --- Individual Quota Modal Logic ---
+    closeIndividualQuotaModalBtn.addEventListener('click', () => {
+        individualQuotaModal.classList.add('hidden');
+    });
+
+    cancelIndividualQuotaBtn.addEventListener('click', () => {
+        individualQuotaModal.classList.add('hidden');
+    });
+
+    individualQuotaModal.addEventListener('click', (e) => {
+        if (e.target === individualQuotaModal) {
+            individualQuotaModal.classList.add('hidden');
+        }
+    });
+
+    individualQuotaForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideError(individualQuotaErrorDiv);
+
+        const modelId = individualQuotaModelIdInput.value;
+        const individualQuota = parseInt(individualQuotaValueInput.value, 10);
+
+        if (isNaN(individualQuota) || individualQuota < 0) {
+            showError("Individual quota must be a non-negative number.", individualQuotaErrorDiv, individualQuotaErrorDiv);
+            return;
+        }
+
+        // Find the existing model to update
+        const modelToUpdate = cachedModels.find(m => m.id === modelId);
+        if (!modelToUpdate) {
+            showError(`Model ${modelId} not found.`, individualQuotaErrorDiv, individualQuotaErrorDiv);
+            return;
+        }
+
+        // Create the payload with existing data plus the new individualQuota
+        const payload = {
+            id: modelId,
+            category: modelToUpdate.category,
+            individualQuota: individualQuota > 0 ? individualQuota : undefined // If 0, set to undefined to remove quota
+        };
+
+        // If it's a Custom model, preserve the dailyQuota
+        if (modelToUpdate.category === 'Custom' && modelToUpdate.dailyQuota) {
+            payload.dailyQuota = modelToUpdate.dailyQuota;
+        }
+
+        const result = await apiFetch('/models', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+
+        if (result && result.success) {
+            individualQuotaModal.classList.add('hidden');
+            await loadModels(); // Reload models to show updated quota
+            await loadGeminiKeys(); // Reload keys as they display model usage
+            
+            if (individualQuota > 0) {
+                showSuccess(`Individual quota for ${modelId} set to ${individualQuota}.`);
+            } else {
+                showSuccess(`Individual quota for ${modelId} removed.`);
+            }
+        } else {
+            showError(result?.error || "Failed to set individual quota.", individualQuotaErrorDiv, individualQuotaErrorDiv);
         }
     });
 
