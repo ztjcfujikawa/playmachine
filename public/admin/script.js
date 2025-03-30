@@ -304,7 +304,7 @@ function hideError(container = errorMessageDiv) {
                 </div>
             `;
 
-            // 处理Pro类别独立额度模型
+            // Handle Pro category individual quota models
             const proModelsWithIndividualQuota = cachedModels.filter(model => 
                 model.category === 'Pro' && 
                 model.individualQuota && 
@@ -361,7 +361,7 @@ function hideError(container = errorMessageDiv) {
                 </div>
             `;
             
-            // 处理Flash类别独立额度模型
+            // Handle Flash category individual quota models
             const flashModelsWithIndividualQuota = cachedModels.filter(model => 
                 model.category === 'Flash' && 
                 model.individualQuota && 
@@ -417,7 +417,7 @@ function hideError(container = errorMessageDiv) {
                 `;
 
                 customModelUsageEntries.forEach(([modelId, usageData]) => {
-                    // 确保正确获取count，无论是否为对象结构
+                    // Ensure count is obtained correctly, regardless of object structure
                     const count = typeof usageData === 'object' ? 
                         (usageData.count || 0) : (usageData || 0);
                     const quota = typeof usageData === 'object' ? 
