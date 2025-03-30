@@ -1058,49 +1058,41 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 						const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 						const keyId = keyMeta.name.replace('key:', '');
 						const todayInLA = getTodayInLA();
+						const isQuotaReset = keyInfoData.usageDate !== todayInLA;
 
 						let modelUsageData: Record<string, { count: number; quota?: number }> = {};
 						let categoryUsageData = { pro: 0, flash: 0 };
 
+						// Populate modelUsageData for all relevant models (Custom or Pro/Flash with individualQuota)
 						Object.entries(modelsConfig).forEach(([modelId, modelConfig]) => {
+							let quota: number | undefined = undefined;
+							let shouldInclude = false;
+
 							if (modelConfig.category === 'Custom') {
+								quota = modelConfig.dailyQuota;
+								shouldInclude = true; // Always include Custom models
+							} else if ((modelConfig.category === 'Pro' || modelConfig.category === 'Flash') && modelConfig.individualQuota) {
+								quota = modelConfig.individualQuota;
+								shouldInclude = true; // Include Pro/Flash if they have individualQuota
+							}
+
+							if (shouldInclude) {
+								const count = isQuotaReset 
+									? 0 
+									: (keyInfoData.modelUsage?.[modelId] ?? 0);
+								
 								modelUsageData[modelId] = {
-									count: 0, 
-									quota: modelConfig.dailyQuota
+									count: typeof count === 'number' ? count : 0, // Ensure count is a number
+									quota: quota
 								};
 							}
 						});
+						
+						// Populate categoryUsageData
+						categoryUsageData = isQuotaReset 
+							? { pro: 0, flash: 0 } 
+							: (keyInfoData.categoryUsage || { pro: 0, flash: 0 });
 
-						if (keyInfoData.usageDate === todayInLA) {
-							if (keyInfoData.modelUsage) {
-								Object.entries(keyInfoData.modelUsage).forEach(([modelId, count]) => {
-									if (modelsConfig[modelId]?.category === 'Custom') {
-										modelUsageData[modelId] = {
-											count: typeof count === 'number' ? count : 0,
-											quota: modelsConfig[modelId]?.dailyQuota
-										};
-									}
-								});
-							}
-							categoryUsageData = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
-						}
-
-						// Check for models with individual quotas and update modelUsage accordingly
-						if (keyInfoData.usageDate === todayInLA && keyInfoData.modelUsage) {
-							Object.entries(keyInfoData.modelUsage).forEach(([modelId, count]) => {
-								// If it's a Pro or Flash model with individual quota
-								const model = modelsConfig[modelId];
-								if (model && (model.category === 'Pro' || model.category === 'Flash') && model.individualQuota) {
-									if (!modelUsageData[modelId]) {
-										modelUsageData[modelId] = {};
-									}
-									modelUsageData[modelId] = {
-										count: typeof count === 'number' ? count : 0,
-										quota: model.individualQuota
-									};
-								}
-							});
-						}
 
 						return {
 							id: keyId,
@@ -1939,21 +1931,39 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 
 		// Set the specific category/model usage to its limit
 		let quotaLimit = Infinity;
+		const modelConfig = modelId ? modelsConfig[modelId] : undefined;
+
 		switch (category) {
 			case 'Pro':
-				quotaLimit = categoryQuotas.proQuota ?? Infinity;
-				categoryUsage.pro = quotaLimit;
-				console.log(`Forcing Pro usage for key ${keyId} to limit: ${quotaLimit}`);
+				// Check if the specific Pro model has an individual quota
+				if (modelConfig?.individualQuota) {
+					quotaLimit = modelConfig.individualQuota;
+					modelUsage[modelId!] = quotaLimit; // modelId must exist here
+					console.log(`Forcing Pro model ${modelId} individual usage for key ${keyId} to limit: ${quotaLimit}`);
+				} else {
+					// No individual quota, force the whole category
+					quotaLimit = categoryQuotas.proQuota ?? Infinity;
+					categoryUsage.pro = quotaLimit;
+					console.log(`Forcing Pro category usage for key ${keyId} to limit: ${quotaLimit}`);
+				}
 				break;
 			case 'Flash':
-				quotaLimit = categoryQuotas.flashQuota ?? Infinity;
-				categoryUsage.flash = quotaLimit;
-				console.log(`Forcing Flash usage for key ${keyId} to limit: ${quotaLimit}`);
+				// Check if the specific Flash model has an individual quota
+				if (modelConfig?.individualQuota) {
+					quotaLimit = modelConfig.individualQuota;
+					modelUsage[modelId!] = quotaLimit; // modelId must exist here
+					console.log(`Forcing Flash model ${modelId} individual usage for key ${keyId} to limit: ${quotaLimit}`);
+				} else {
+					// No individual quota, force the whole category
+					quotaLimit = categoryQuotas.flashQuota ?? Infinity;
+					categoryUsage.flash = quotaLimit;
+					console.log(`Forcing Flash category usage for key ${keyId} to limit: ${quotaLimit}`);
+				}
 				break;
 			case 'Custom':
-				if (modelId && modelsConfig[modelId]) {
-					quotaLimit = modelsConfig[modelId].dailyQuota ?? Infinity;
-					modelUsage[modelId] = quotaLimit;
+				if (modelConfig) {
+					quotaLimit = modelConfig.dailyQuota ?? Infinity;
+					modelUsage[modelId!] = quotaLimit; // modelId must exist here
 					console.log(`Forcing Custom model ${modelId} usage for key ${keyId} to limit: ${quotaLimit}`);
 				} else {
 					console.warn(`Cannot force quota limit for Custom model: modelId '${modelId}' not provided or not found in config.`);
