@@ -553,8 +553,8 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	// Get and store Worker API Key for later use
 	workerApiKey = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
 
-	// --- Key Selection (Remains the same) ---
-	const selectedKey = await getNextAvailableGeminiKey(env, ctx);
+	// --- Key Selection (使用基于权重的选择) ---
+	const selectedKey = await getNextAvailableGeminiKey(env, ctx, requestedModelId);
 	if (!selectedKey) {
 		return new Response(JSON.stringify({ error: "No available Gemini API Key configured." }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 	}
@@ -897,7 +897,7 @@ async function handleAdminGeminiModels(request: Request, env: Env, ctx: Executio
   }
 
   // First check if there are any available Gemini API Keys
-  const selectedKey = await getNextAvailableGeminiKey(env, ctx);
+  const selectedKey = await getNextAvailableGeminiKey(env, ctx, undefined);
   if (!selectedKey) {
     // No available keys, return empty array
     return new Response(JSON.stringify([]), { headers });
@@ -1761,11 +1761,11 @@ function handleLogoutRequest(): Response {
 // --- Gemini Key Management ---
 
 /**
- * Finds the next available Gemini API Key based on round-robin.
- * Does NOT check quota here. Quota check happens in handleV1ChatCompletions based on the requested model.
- * Updates the round-robin index for the next request.
+ * 根据权重选择API密钥。权重基于密钥的使用次数，使用次数越少权重越高。
+ * 权重计算考虑请求的模型ID，不同模型有独立的使用计数。
+ * 不在此处检查配额，配额检查在handleV1ChatCompletions中进行。
  */
-async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext): Promise<{ id: string; key: string } | null> { // Return only id and key
+async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, requestedModelId?: string): Promise<{ id: string; key: string } | null> {
 	try {
 		const keyListJson = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST);
 		const keyList: string[] = keyListJson ? JSON.parse(keyListJson) : [];
@@ -1775,49 +1775,99 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext): Promi
 			return null;
 		}
 
-		const indexStr = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_INDEX);
-		let currentIndex = indexStr ? parseInt(indexStr, 10) : 0;
-		if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= keyList.length) {
-			currentIndex = 0; // Reset if index is invalid
-		}
+		// 获取今天的日期（洛杉矶时区）
+		const todayInLA = getTodayInLA();
+		
+		// 获取每个密钥的信息并计算权重
+		const keysWithWeights: Array<{
+			id: string;
+			key: string;
+			weight: number;
+			usage: number;
+			modelUsage: number;
+		}> = [];
 
-		// Iterate through keys starting from currentIndex, max one full loop
-		for (let i = 0; i < keyList.length; i++) {
-			const keyIndexToCheck = (currentIndex + i) % keyList.length;
-			const keyId = keyList[keyIndexToCheck];
+		for (const keyId of keyList) {
 			const keyKvName = `key:${keyId}`;
-
 			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+			
 			if (!keyInfoJson) {
 				console.warn(`Key info not found for ID: ${keyId} listed in ${KV_KEY_GEMINI_KEY_LIST}. Skipping.`);
 				continue;
 			}
 
 			try {
-				// IMPORTANT: Parse the JSON string from KV
-				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>; // Use Partial for safety
-
-				// Key exists, select it for round-robin
-				console.log(`Selected Gemini Key ID via round-robin: ${keyId}`);
-
-				// Update the index for the *next* request in the background
-				const nextIndex = (keyIndexToCheck + 1) % keyList.length;
-				ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_INDEX, nextIndex.toString()));
-
-				// Return only the ID and the key value needed for the request
-				return {
+				// 解析KV中的JSON字符串
+				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+				
+				// 如果密钥的使用日期不是今天，则其使用量应被视为0
+				const isCurrentDay = keyInfoData.usageDate === todayInLA;
+				const totalUsage = isCurrentDay ? (keyInfoData.usage || 0) : 0;
+				
+				// 获取特定模型的使用量
+				let modelSpecificUsage = 0;
+				if (requestedModelId && isCurrentDay && keyInfoData.modelUsage) {
+					modelSpecificUsage = keyInfoData.modelUsage[requestedModelId] || 0;
+				}
+				
+				// 计算权重 - 权重与使用量成反比
+				// 使用小值1防止除以零，并使用指数函数使差异更加明显
+				const baseWeight = Math.exp(-modelSpecificUsage / 10) * 100;
+				
+				keysWithWeights.push({
 					id: keyId,
 					key: keyInfoData.key || '',
-				};
-				// Quota check is moved to handleV1ChatCompletions
+					weight: baseWeight,
+					usage: totalUsage,
+					modelUsage: modelSpecificUsage
+				});
 			} catch (parseError) {
 				console.error(`Failed to parse key info for ID: ${keyId}. Skipping. Error:`, parseError);
 				continue;
 			}
 		}
 
-		console.error("All Gemini keys seem misconfigured or unusable.");
-		return null;
+		// 检查是否有可用的密钥
+		if (keysWithWeights.length === 0) {
+			console.error("No usable Gemini keys found.");
+			return null;
+		}
+
+		// 按权重排序（从高到低）并记录日志
+		keysWithWeights.sort((a, b) => b.weight - a.weight);
+		
+		// 记录排序结果（用于调试）
+		console.log("Keys sorted by weight (higher weight = higher priority):");
+		keysWithWeights.forEach(k => {
+			console.log(`Key: ${k.id}, Model usage: ${k.modelUsage}, Total usage: ${k.usage}, Weight: ${k.weight.toFixed(2)}`);
+		});
+
+		// 使用加权随机选择
+		// 1. 计算权重总和
+		const totalWeight = keysWithWeights.reduce((sum, key) => sum + key.weight, 0);
+		
+		// 2. 生成0到totalWeight之间的随机数
+		const randomValue = Math.random() * totalWeight;
+		
+		// 3. 通过权重选择密钥
+		let cumulativeWeight = 0;
+		for (const keyInfo of keysWithWeights) {
+			cumulativeWeight += keyInfo.weight;
+			if (randomValue <= cumulativeWeight) {
+				console.log(`Selected Gemini Key ID via weighted algorithm: ${keyInfo.id} (weight: ${keyInfo.weight.toFixed(2)}, model usage: ${keyInfo.modelUsage})`);
+				return {
+					id: keyInfo.id,
+					key: keyInfo.key
+				};
+			}
+		}
+		
+		// 如果由于浮点误差而未选择任何密钥，则返回权重最高的密钥
+		console.log(`Fallback: Selected highest weighted key: ${keysWithWeights[0].id}`);
+		return {
+			id: keysWithWeights[0].id,
+			key: keysWithWeights[0].key
+		};
 
 	} catch (error) {
 		console.error("Error retrieving or processing Gemini keys from KV:", error);
