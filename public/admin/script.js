@@ -304,32 +304,6 @@ function hideError(container = errorMessageDiv) {
                 </div>
             `;
 
-            // Flash Category Usage
-            const flashUsage = key.categoryUsage?.flash || 0;
-            const flashQuota = cachedCategoryQuotas.flashQuota;
-            const flashQuotaDisplay = formatQuota(flashQuota);
-            const flashRemaining = flashQuota === Infinity ? Infinity : Math.max(0, flashQuota - flashUsage);
-            const flashRemainingDisplay = formatQuota(flashRemaining);
-            const flashRemainingPercentage = calculateRemainingPercentage(flashUsage, flashQuota);
-            const flashProgressColor = getProgressColor(flashRemainingPercentage);
-
-            modalHTML += `
-                <div>
-                    <div class="flex justify-between mb-1">
-                        <span class="text-sm font-medium text-gray-700">Flash Models</span>
-                        <span class="text-sm font-medium text-gray-700">${flashRemainingDisplay}/${flashQuotaDisplay}</span>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-2.5">
-                        <div class="${flashProgressColor} h-2.5 rounded-full" style="width: ${flashRemainingPercentage}%"></div>
-                    </div>
-                </div>
-            `;
-
-            modalHTML += `
-                        </div>
-                    </div>
-            `;
-
             // 处理Pro类别独立额度模型
             const proModelsWithIndividualQuota = cachedModels.filter(model => 
                 model.category === 'Pro' && 
@@ -339,11 +313,6 @@ function hideError(container = errorMessageDiv) {
             );
 
             if (proModelsWithIndividualQuota.length > 0) {
-                // 不添加新的分隔线，因为这些内容将直接显示在Pro Models下方
-                modalHTML += `
-                    <div class="mt-2">
-                `;
-                
                 proModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
                     const count = key.modelUsage?.[modelId] || 0;
@@ -355,7 +324,7 @@ function hideError(container = errorMessageDiv) {
                     const progressColor = getProgressColor(remainingPercentage);
 
                     modalHTML += `
-                        <div class="ml-4 mt-2">
+                        <div class="mt-2">
                             <div class="flex justify-between mb-1">
                                 <span class="text-sm font-medium text-gray-700">${modelId}</span>
                                 <span class="text-sm font-medium text-gray-700">${remainingDisplay}/${quotaDisplay}</span>
@@ -366,12 +335,29 @@ function hideError(container = errorMessageDiv) {
                         </div>
                     `;
                 });
-
-                modalHTML += `
-                    </div>
-                `;
             }
 
+            // Flash Category Usage
+            const flashUsage = key.categoryUsage?.flash || 0;
+            const flashQuota = cachedCategoryQuotas.flashQuota;
+            const flashQuotaDisplay = formatQuota(flashQuota);
+            const flashRemaining = flashQuota === Infinity ? Infinity : Math.max(0, flashQuota - flashUsage);
+            const flashRemainingDisplay = formatQuota(flashRemaining);
+            const flashRemainingPercentage = calculateRemainingPercentage(flashUsage, flashQuota);
+            const flashProgressColor = getProgressColor(flashRemainingPercentage);
+
+            modalHTML += `
+                <div class="mt-2">
+                    <div class="flex justify-between mb-1">
+                        <span class="text-sm font-medium text-gray-700">Flash Models</span>
+                        <span class="text-sm font-medium text-gray-700">${flashRemainingDisplay}/${flashQuotaDisplay}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div class="${flashProgressColor} h-2.5 rounded-full" style="width: ${flashRemainingPercentage}%"></div>
+                    </div>
+                </div>
+            `;
+            
             // 处理Flash类别独立额度模型
             const flashModelsWithIndividualQuota = cachedModels.filter(model => 
                 model.category === 'Flash' && 
@@ -381,11 +367,6 @@ function hideError(container = errorMessageDiv) {
             );
 
             if (flashModelsWithIndividualQuota.length > 0) {
-                // 不添加新的分隔线，因为这些内容将直接显示在Flash Models下方
-                modalHTML += `
-                    <div class="mt-2">
-                `;
-                
                 flashModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
                     const count = key.modelUsage?.[modelId] || 0;
@@ -397,7 +378,7 @@ function hideError(container = errorMessageDiv) {
                     const progressColor = getProgressColor(remainingPercentage);
 
                     modalHTML += `
-                        <div class="ml-4 mt-2">
+                        <div class="mt-2">
                             <div class="flex justify-between mb-1">
                                 <span class="text-sm font-medium text-gray-700">${modelId}</span>
                                 <span class="text-sm font-medium text-gray-700">${remainingDisplay}/${quotaDisplay}</span>
@@ -408,11 +389,12 @@ function hideError(container = errorMessageDiv) {
                         </div>
                     `;
                 });
-
-                modalHTML += `
-                    </div>
-                `;
             }
+
+            modalHTML += `
+                        </div>
+                    </div>
+            `;
 
             // Custom Model Usage Section (Only if there are custom models used by this key)
             const customModelUsageEntries = Object.entries(key.modelUsage || {})
