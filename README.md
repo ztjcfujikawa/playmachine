@@ -27,10 +27,11 @@ You can choose any of the following methods for deployment:
 1.  Click the [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel) button above.
 2.  Follow the prompts from Cloudflare to complete the deployment process, authorizing access to your GitHub repository.
 3.  After deployment, you will need to perform the necessary **Post-Deployment Configuration**.
+    *   Note: This project is currently under development. Using the "Deploy to Cloudflare" one-click deployment might prevent receiving future updates.
 
 ### Method 2: Automatic Deployment via GitHub Actions(Recommended)
 
-This method is suitable for users who want to manage the code in their own forked repository and automatically update the deployment via `git push`.
+This method is suitable for users who want their worker to automatically sync updates from the original repository.
 
 1.  **Fork the Repository**:
     *   Click the "Fork" button in the upper right corner of this repository to fork it to your own GitHub account.
@@ -102,14 +103,14 @@ This method is suitable for users who want to manage the code in their own forke
 
 **Regardless of the deployment method used**, after the initial successful deployment, you need to perform the following configurations in the Cloudflare Dashboard:
 
-1.  **Create KV Namespaces**:
+1.  **Create KV Namespaces**: **(No need to handle for automatic deployment)**
     *   In the Cloudflare Dashboard, navigate to "Workers & Pages" -> "KV".
     *   Create two KV Namespaces:
         *   `GEMINI_KEYS_KV`
         *   `WORKER_CONFIG_KV`
-    *   Note down their Namespace IDs (though you usually select by name when binding).
+    *   Note down their Namespace IDs.
 
-2.  **Bind KV Namespaces to Worker**:
+2.  **Bind KV Namespaces to Worker**: **(No need to handle for automatic deployment)**
     *   Navigate to your deployed Worker (under "Workers & Pages").
     *   Go to the Worker's "Settings" -> "Variables".
     *   In the "KV Namespace Bindings" section, click "Edit variables", then add two bindings:
@@ -117,9 +118,9 @@ This method is suitable for users who want to manage the code in their own forke
         *   Variable name: `WORKER_CONFIG_KV`, KV Namespace: Select the `WORKER_CONFIG_KV` you just created.
     *   Click "Save".
 
-3.  **Set Environment Variables**:
+3.  **Set Environment Variables**: **(Required for all methods)**
     *   On the same Worker's "Settings" -> "Variables" page.
-    *   In the "Environment Variables" section, click "Edit variables", then add the following variables (it's recommended to click "Encrypt" next to the value for added security):
+    *   In the "Environment Variables" section, click "Edit variables", then add the following variables (Select type **Secret**):
         *   `ADMIN_PASSWORD`: Set a secure password to log in to the management panel.
         *   `SESSION_SECRET_KEY`: Set a long and random string for session management. You can use a password generator to create a strong random string (e.g., at least 32 characters).
     *   Click "Save".
