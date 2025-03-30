@@ -943,7 +943,7 @@ function hideError(container = errorMessageDiv) {
                     modal.classList.add('hidden');
                 }
 
-                const result = await apiFetch(`/gemini-keys/${keyId}`, {
+                const result = await apiFetch(`/gemini-keys/${encodeURIComponent(keyId)}`, {
                     method: 'DELETE',
                 });
                 if (result && result.success) {
