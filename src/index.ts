@@ -1085,6 +1085,23 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 							categoryUsageData = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
 						}
 
+						// Check for models with individual quotas and update modelUsage accordingly
+						if (keyInfoData.usageDate === todayInLA && keyInfoData.modelUsage) {
+							Object.entries(keyInfoData.modelUsage).forEach(([modelId, count]) => {
+								// If it's a Pro or Flash model with individual quota
+								const model = modelsConfig[modelId];
+								if (model && (model.category === 'Pro' || model.category === 'Flash') && model.individualQuota) {
+									if (!modelUsageData[modelId]) {
+										modelUsageData[modelId] = {};
+									}
+									modelUsageData[modelId] = {
+										count: typeof count === 'number' ? count : 0,
+										quota: model.individualQuota
+									};
+								}
+							});
+						}
+
 						return {
 							id: keyId,
 							name: keyInfoData.name || keyId,

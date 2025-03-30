@@ -330,22 +330,21 @@ function hideError(container = errorMessageDiv) {
                     </div>
             `;
 
-            // Individual Quota Models Section (Only for Pro/Flash models with individual quotas)
-            const individualQuotaModels = cachedModels.filter(model => 
-                (model.category === 'Pro' || model.category === 'Flash') && 
+            // 处理Pro类别独立额度模型
+            const proModelsWithIndividualQuota = cachedModels.filter(model => 
+                model.category === 'Pro' && 
                 model.individualQuota && 
                 key.modelUsage && 
                 key.modelUsage[model.id] !== undefined
             );
 
-            if (individualQuotaModels.length > 0) {
+            if (proModelsWithIndividualQuota.length > 0) {
+                // 不添加新的分隔线，因为这些内容将直接显示在Pro Models下方
                 modalHTML += `
-                    <div class="border-t border-gray-200 pt-4 mb-4">
-                        <h3 class="text-lg font-medium text-gray-800 mb-3">${individualQuotaModels[0].category === 'Pro' ? 'Pro' : 'Flash'} Models with Individual Quota</h3>
-                        <div class="space-y-4">
+                    <div class="mt-2">
                 `;
-
-                individualQuotaModels.forEach(model => {
+                
+                proModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
                     const count = key.modelUsage?.[modelId] || 0;
                     const quota = model.individualQuota;
@@ -356,7 +355,7 @@ function hideError(container = errorMessageDiv) {
                     const progressColor = getProgressColor(remainingPercentage);
 
                     modalHTML += `
-                        <div>
+                        <div class="ml-4 mt-2">
                             <div class="flex justify-between mb-1">
                                 <span class="text-sm font-medium text-gray-700">${modelId}</span>
                                 <span class="text-sm font-medium text-gray-700">${remainingDisplay}/${quotaDisplay}</span>
@@ -369,7 +368,48 @@ function hideError(container = errorMessageDiv) {
                 });
 
                 modalHTML += `
+                    </div>
+                `;
+            }
+
+            // 处理Flash类别独立额度模型
+            const flashModelsWithIndividualQuota = cachedModels.filter(model => 
+                model.category === 'Flash' && 
+                model.individualQuota && 
+                key.modelUsage && 
+                key.modelUsage[model.id] !== undefined
+            );
+
+            if (flashModelsWithIndividualQuota.length > 0) {
+                // 不添加新的分隔线，因为这些内容将直接显示在Flash Models下方
+                modalHTML += `
+                    <div class="mt-2">
+                `;
+                
+                flashModelsWithIndividualQuota.forEach(model => {
+                    const modelId = model.id;
+                    const count = key.modelUsage?.[modelId] || 0;
+                    const quota = model.individualQuota;
+                    const quotaDisplay = formatQuota(quota);
+                    const remaining = quota === Infinity ? Infinity : Math.max(0, quota - count);
+                    const remainingDisplay = formatQuota(remaining);
+                    const remainingPercentage = calculateRemainingPercentage(count, quota);
+                    const progressColor = getProgressColor(remainingPercentage);
+
+                    modalHTML += `
+                        <div class="ml-4 mt-2">
+                            <div class="flex justify-between mb-1">
+                                <span class="text-sm font-medium text-gray-700">${modelId}</span>
+                                <span class="text-sm font-medium text-gray-700">${remainingDisplay}/${quotaDisplay}</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                                <div class="${progressColor} h-2.5 rounded-full" style="width: ${remainingPercentage}%"></div>
+                            </div>
                         </div>
+                    `;
+                });
+
+                modalHTML += `
                     </div>
                 `;
             }
