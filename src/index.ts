@@ -709,16 +709,32 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	const querySeparator = stream ? '?alt=sse&' : '?';
 	const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
 
-	const headers = new Headers({
-		'Content-Type': 'application/json',
-	});
+	// Prepare headers for Gemini request, removing Cloudflare-specific headers
+	const geminiRequestHeaders = new Headers(); // Start with empty headers
+	geminiRequestHeaders.set('Content-Type', 'application/json'); // Set required content type
+
+	// List of Cloudflare headers to remove (lowercase)
+	const cfHeadersToRemove = [
+		'cf-connecting-ip',
+		'cf-ipcountry',
+		'cf-ray',
+		'cf-visitor',
+		'cdn-loop',
+		'x-forwarded-proto', 
+		'x-forwarded-for', 
+		'true-client-ip', 
+	];
+
 
 	try {
 		console.log(`Sending request to Gemini: ${geminiUrl}`);
+		// Log headers being sent to Gemini (excluding API key for security)
+		const headersToSend = new Headers(geminiRequestHeaders); // Clone for logging
+		console.log("Gemini Request Headers:", Object.fromEntries(headersToSend.entries()));
 
 		const geminiResponse = await fetch(geminiUrl, {
 			method: 'POST',
-			headers: headers,
+			headers: geminiRequestHeaders, // Use the cleaned headers
 			body: JSON.stringify(geminiRequestBody),
 		});
 
