@@ -119,7 +119,7 @@
 
 3.  **设置环境变量**: **（都需要处理）**
     *   在同一个 Worker 的 "设置" (Settings) -> "变量" (Variables) 页面。
-    *   在 "环境变量" (Environment Variables) 部分，点击 "编辑变量" (Edit variables)，然后添加以下变量 (建议点击变量值右侧的 "加密" (Encrypt) 以提高安全性):
+    *   在 "环境变量" (Environment Variables) 部分，点击 "编辑变量" (Edit variables)，然后添加以下变量 (类型选择**密钥**):
         *   `ADMIN_PASSWORD`: 设置一个安全的密码，用于登录管理面板。
         *   `SESSION_SECRET_KEY`: 设置一个长且随机的字符串，用于会话管理。你可以使用密码生成器生成一个强随机字符串（例如，至少 32 个字符）。
     *   点击 "保存" (Save)。
