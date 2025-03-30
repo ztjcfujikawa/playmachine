@@ -313,9 +313,12 @@ function hideError(container = errorMessageDiv) {
             );
 
             if (proModelsWithIndividualQuota.length > 0) {
-                proModelsWithIndividualQuota.forEach(model => {
+            proModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
-                    const count = key.modelUsage?.[modelId] || 0;
+                    // 检查是否是对象结构，如果是则提取count属性
+                    const count = typeof key.modelUsage?.[modelId] === 'object' ? 
+                        (key.modelUsage?.[modelId]?.count || 0) : 
+                        (key.modelUsage?.[modelId] || 0);
                     const quota = model.individualQuota;
                     const quotaDisplay = formatQuota(quota);
                     const remaining = quota === Infinity ? Infinity : Math.max(0, quota - count);
@@ -369,7 +372,10 @@ function hideError(container = errorMessageDiv) {
             if (flashModelsWithIndividualQuota.length > 0) {
                 flashModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
-                    const count = key.modelUsage?.[modelId] || 0;
+                    // 检查是否是对象结构，如果是则提取count属性
+                    const count = typeof key.modelUsage?.[modelId] === 'object' ? 
+                        (key.modelUsage?.[modelId]?.count || 0) : 
+                        (key.modelUsage?.[modelId] || 0);
                     const quota = model.individualQuota;
                     const quotaDisplay = formatQuota(quota);
                     const remaining = quota === Infinity ? Infinity : Math.max(0, quota - count);
@@ -411,8 +417,11 @@ function hideError(container = errorMessageDiv) {
                 `;
 
                 customModelUsageEntries.forEach(([modelId, usageData]) => {
-                    const count = usageData.count || 0;
-                    const quota = usageData.quota; // Quota is now included in the key data for custom models
+                    // 确保正确获取count，无论是否为对象结构
+                    const count = typeof usageData === 'object' ? 
+                        (usageData.count || 0) : (usageData || 0);
+                    const quota = typeof usageData === 'object' ? 
+                        usageData.quota : undefined; // Quota is now included in the key data for custom models
                     const quotaDisplay = formatQuota(quota);
                     const remaining = quota === Infinity ? Infinity : Math.max(0, quota - count);
                     const remainingDisplay = formatQuota(remaining);
