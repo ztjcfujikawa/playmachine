@@ -713,7 +713,11 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	const geminiRequestHeaders = new Headers(); // Start with empty headers
 	geminiRequestHeaders.set('Content-Type', 'application/json'); // Set required content type
 
-	// List of Cloudflare headers to remove (lowercase)
+	// Add common browser-like headers
+	geminiRequestHeaders.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'); 
+	geminiRequestHeaders.set('Accept', 'application/json, text/plain, */*');
+	geminiRequestHeaders.set('Accept-Language', 'en-US,en;q=0.9'); 
+
 	const cfHeadersToRemove = [
 		'cf-connecting-ip',
 		'cf-ipcountry',
