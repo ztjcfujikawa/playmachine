@@ -875,22 +875,8 @@ function hideError(container = errorMessageDiv) {
             }
         });
         
-        // Keep the original datalist as a backup
-        let datalist = document.getElementById('model-suggestions');
-        if (!datalist) {
-            datalist = document.createElement('datalist');
-            datalist.id = 'model-suggestions';
-            modelIdInput.parentNode.appendChild(datalist);
-        }
-        
-        datalist.innerHTML = '';
-        models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model.id;
-            datalist.appendChild(option);
-        });
-        
-        modelIdInput.setAttribute('list', 'model-suggestions');
+        // Remove datalist attribute from input if it exists
+        modelIdInput.removeAttribute('list');
     }
 
 
