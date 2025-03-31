@@ -234,6 +234,24 @@ function hideError(container = errorMessageDiv) {
             cardItem.className = 'card-item p-4 border rounded-md bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer';
             cardItem.dataset.keyId = key.id;
 
+            // Show warning icon
+            let rightSideContent = '';
+            if (key.errorStatus === 401 || key.errorStatus === 403) {
+                rightSideContent = `
+                    <div class="warning-icon-container">
+                        <svg class="w-5 h-5 text-yellow-500 warning-icon" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 3.001-1.742 3.001H4.42c-1.53 0-2.493-1.667-1.743-3.001l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm0-8a1 1 0 011 1v3a1 1 0 11-2 0V6a1 1 0 011-1z" clip-rule="evenodd"></path>
+                        </svg>
+                    </div>
+                `;
+            } else {
+                rightSideContent = `
+                    <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                        Total: ${key.usage}
+                    </div>
+                `;
+            }
+
             // Simple card content, displaying basic information only
             cardItem.innerHTML = `
                 <div class="flex items-center justify-between">
@@ -241,25 +259,9 @@ function hideError(container = errorMessageDiv) {
                         <h3 class="font-medium text-gray-900">${key.name || key.id}</h3>
                         <p class="text-xs text-gray-500">ID: ${key.id} | ${key.keyPreview}</p>
                     </div>
-                    <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                        Total: ${key.usage}
-                    </div>
+                    ${rightSideContent}
                 </div>
             `;
-            // --- Add Warning Icon if errorStatus is present ---
-            let warningIconHTML = '';
-            if (key.errorStatus === 401 || key.errorStatus === 403) {
-                warningIconHTML = `
-                    <svg class="w-5 h-5 text-yellow-500 ml-2 warning-icon" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 3.001-1.742 3.001H4.42c-1.53 0-2.493-1.667-1.743-3.001l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm0-8a1 1 0 011 1v3a1 1 0 11-2 0V6a1 1 0 011-1z" clip-rule="evenodd"></path>
-                    </svg>
-                `;
-            }
-            // --- End Warning Icon ---
-
-            // Add warning icon to the right side div
-            cardItem.querySelector('.flex.items-center.justify-between > div:last-child').insertAdjacentHTML('beforebegin', warningIconHTML);
-            // --- End Add Warning Icon ---
 
 
             keysGrid.appendChild(cardItem);
