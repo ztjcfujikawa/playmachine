@@ -1912,6 +1912,13 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			try {
 				// Parse the JSON string from KV
 				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+
+				// --- New: Skip keys with 401/403 errors ---
+				if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
+					console.log(`Skipping key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
+					continue; // Skip this key
+				}
+				// --- End New ---
 				
 				// If the key's usage date is not today, its usage should be considered 0
 				const isCurrentDay = keyInfoData.usageDate === todayInLA;
