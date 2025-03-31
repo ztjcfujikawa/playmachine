@@ -1055,7 +1055,15 @@ async function handleTestGeminiKey(request: Request, env: Env, ctx: ExecutionCon
 
 		if (response.ok) {
 			ctx.waitUntil(incrementKeyUsage(body.keyId, env, body.modelId, modelCategory));
+		} else {
+			// --- New: Record 401/403 errors during test ---
+			if (response.status === 401 || response.status === 403) {
+				console.warn(`Received ${response.status} during test for key ${body.keyId}. Recording error status.`);
+				ctx.waitUntil(recordKeyError(body.keyId, env, response.status as 401 | 403));
+			}
+			// --- End New Error Recording ---
 		}
+
 
 		return new Response(JSON.stringify({
 			success: response.ok,
