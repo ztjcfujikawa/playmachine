@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const proQuotaInput = document.getElementById('pro-quota');
     const flashQuotaInput = document.getElementById('flash-quota');
     const categoryQuotasErrorDiv = document.getElementById('category-quotas-error');
+    const geminiKeyErrorContainer = document.getElementById('gemini-key-error-container'); // Container for error messages in modal
     // Individual Quota Elements
     const individualQuotaModal = document.getElementById('individual-quota-modal');
     const closeIndividualQuotaModalBtn = document.getElementById('close-individual-quota-modal');
@@ -47,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let cachedModels = [];
     let cachedGeminiModels = []; // Add cache for available Gemini models
     let cachedCategoryQuotas = { proQuota: 0, flashQuota: 0 };
+    // No need for a separate errorKeyIds cache, as errorStatus is now part of the key data
 
     // --- Utility Functions ---
     function showLoading() {
@@ -244,6 +246,22 @@ function hideError(container = errorMessageDiv) {
                     </div>
                 </div>
             `;
+            // --- Add Warning Icon if errorStatus is present ---
+            let warningIconHTML = '';
+            if (key.errorStatus === 401 || key.errorStatus === 403) {
+                warningIconHTML = `
+                    <svg class="w-5 h-5 text-yellow-500 ml-2 warning-icon" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 3.001-1.742 3.001H4.42c-1.53 0-2.493-1.667-1.743-3.001l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm0-8a1 1 0 011 1v3a1 1 0 11-2 0V6a1 1 0 011-1z" clip-rule="evenodd"></path>
+                    </svg>
+                `;
+            }
+            // --- End Warning Icon ---
+
+            // Add warning icon to the right side div
+            cardItem.querySelector('.flex.items-center.justify-between > div:last-child').insertAdjacentHTML('beforebegin', warningIconHTML);
+            // --- End Add Warning Icon ---
+
+
             keysGrid.appendChild(cardItem);
 
             // Create a hidden detailed information modal
@@ -270,11 +288,17 @@ function hideError(container = errorMessageDiv) {
                         <div>
                             <p class="text-sm text-gray-600">Total Usage Today: ${key.usage}</p>
                             <p class="text-sm text-gray-600">Date: ${key.usageDate}</p>
+                            ${key.errorStatus ? `<p class="text-sm text-red-600 font-medium">Error Status: ${key.errorStatus}</p>` : ''}
                         </div>
                     </div>
                     <div class="flex justify-end space-x-2 mb-4">
+                        ${key.errorStatus ? `<button data-id="${key.id}" class="clear-gemini-key-error text-yellow-600 hover:text-yellow-800 font-medium px-3 py-1 border border-yellow-600 rounded">Ignore Error</button>` : ''}
                         <button data-id="${key.id}" class="test-gemini-key text-blue-500 hover:text-blue-700 font-medium px-3 py-1 border border-blue-500 rounded">Test</button>
                         <button data-id="${key.id}" class="delete-gemini-key text-red-500 hover:text-red-700 font-medium px-3 py-1 border border-red-500 rounded">Delete</button>
+                    </div>
+                    <!-- Container for error messages within the modal -->
+                    <div id="gemini-key-error-container-${key.id}" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded relative mb-4" role="alert">
+                        <span class="block sm:inline"></span>
                     </div>
 
                     <!-- Category Usage Section -->
@@ -938,6 +962,49 @@ function hideError(container = errorMessageDiv) {
                 }
             }
         }
+
+        // --- New: Clear Gemini Key Error ---
+        if (e.target.classList.contains('clear-gemini-key-error')) {
+            const keyId = e.target.dataset.id;
+            const button = e.target;
+            const modalErrorContainer = document.getElementById(`gemini-key-error-container-${keyId}`);
+            const modalErrorSpan = modalErrorContainer?.querySelector('span');
+
+            if (confirm(`Are you sure you want to clear the error status for key: ${keyId}?`)) {
+                const result = await apiFetch('/clear-key-error', {
+                    method: 'POST',
+                    body: JSON.stringify({ keyId }),
+                });
+
+                if (result && result.success) {
+                    // Remove warning icon from card
+                    const cardItem = document.querySelector(`.card-item[data-key-id="${keyId}"]`);
+                    const warningIcon = cardItem?.querySelector('.warning-icon');
+                    if (warningIcon) {
+                        warningIcon.remove();
+                    }
+                    // Remove error status text from modal
+                    const errorStatusP = button.closest('.modal-content').querySelector('p.text-red-600');
+                     if (errorStatusP) {
+                        errorStatusP.remove();
+                    }
+                    // Remove the button itself
+                    button.remove();
+                    showSuccess(`Error status cleared for key ${keyId}.`);
+                    // Optionally update the key data in cache if needed, or just rely on next reload
+                } else {
+                    // Show error within the modal
+                    if (modalErrorContainer && modalErrorSpan) {
+                        modalErrorSpan.textContent = result?.error || 'Failed to clear error status.';
+                        modalErrorContainer.classList.remove('hidden');
+                         setTimeout(() => modalErrorContainer.classList.add('hidden'), 5000);
+                    } else {
+                        showError(result?.error || 'Failed to clear error status.'); // Fallback to global error
+                    }
+                }
+            }
+        }
+        // --- End Clear Gemini Key Error ---
     });
 
      // Add Worker Key (no changes needed)

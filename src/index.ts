@@ -46,6 +46,7 @@ interface GeminiKeyInfo {
 	modelUsage?: Record<string, number>;
 	categoryUsage?: { pro: number; flash: number };
 	name?: string;
+	errorStatus?: 401 | 403 | null; // Added to track 401/403 errors
 }
 
 /**
@@ -757,7 +758,19 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				// Force set the quota to its limit for this category/model on this key for today
 				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
 			}
-			// --- End New 429 Handling ---
+			// --- New: Handle 401/403 for error tracking ---
+			if (geminiResponse.status === 401 || geminiResponse.status === 403) {
+				console.warn(`Received ${geminiResponse.status} from Gemini for key ${selectedKey.id}. Recording error status.`);
+				ctx.waitUntil(recordKeyError(selectedKey.id, env, geminiResponse.status as 401 | 403));
+			}
+			// --- End New 401/403 Handling ---
+
+			// --- Existing 429 Handling ---
+			if (geminiResponse.status === 429) {
+				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Forcing quota to limit for today.`);
+				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
+			}
+			// --- End Existing 429 Handling ---
 
 			return new Response(JSON.stringify({
 				error: {
@@ -966,6 +979,10 @@ async function handleAdminApi(request: Request, env: Env, ctx: ExecutionContext)
 				return await handleTestGeminiKey(request, env, ctx);
 			case 'gemini-models':
 				return await handleAdminGeminiModels(request, env, ctx);
+			case 'error-keys': // New route to get keys with errors
+				return await handleAdminGetErrorKeys(request, env, ctx);
+			case 'clear-key-error': // New route to clear a key's error
+				return await handleAdminClearKeyError(request, env, ctx);
 			default:
 				return new Response(JSON.stringify({ error: "Unknown admin resource" }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 		}
@@ -1055,6 +1072,92 @@ async function handleTestGeminiKey(request: Request, env: Env, ctx: ExecutionCon
 
 // --- Admin API Resource Handlers ---
 
+// New handler to get keys with errors
+async function handleAdminGetErrorKeys(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+	if (request.method !== 'GET') {
+		return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for error-keys` }),
+			{ status: 405, headers: { ...headers, 'Allow': 'GET' } });
+	}
+
+	try {
+		const listResult = await env.GEMINI_KEYS_KV.list({ prefix: 'key:' });
+		const errorKeyPromises = listResult.keys.map(async (keyMeta) => {
+			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyMeta.name);
+			if (!keyInfoJson) return null;
+			try {
+				const keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>;
+				if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
+					const keyId = keyMeta.name.replace('key:', '');
+					return {
+						id: keyId,
+						name: keyInfoData.name || keyId,
+						error: keyInfoData.errorStatus,
+					};
+				}
+				return null;
+			} catch (e) {
+				console.error(`Error processing error status for key ${keyMeta.name}:`, e);
+				return null;
+			}
+		});
+
+		const errorKeys = (await Promise.all(errorKeyPromises)).filter(k => k !== null);
+		return new Response(JSON.stringify(errorKeys), { headers });
+
+	} catch (error) {
+		console.error(`Error handling admin API for Error Keys:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+// New handler to clear a key's error status
+async function handleAdminClearKeyError(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
+	if (request.method !== 'POST') {
+		return new Response(JSON.stringify({ error: `Method ${request.method} not allowed for clear-key-error` }),
+			{ status: 405, headers: { ...headers, 'Allow': 'POST' } });
+	}
+
+	const body = await readRequestBody<{ keyId: string }>(request);
+	if (!body || typeof body.keyId !== 'string' || body.keyId.trim() === '') {
+		return new Response(JSON.stringify({ error: 'Request body must include a valid non-empty string: keyId' }), { status: 400, headers });
+	}
+
+	const keyIdToClear = body.keyId.trim();
+	const keyKvName = `key:${keyIdToClear}`;
+
+	try {
+		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+		if (!keyInfoJson) {
+			return new Response(JSON.stringify({ error: `Key with ID '${keyIdToClear}' not found.` }), { status: 404, headers });
+		}
+
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>;
+
+		if (keyInfoData.errorStatus === null || keyInfoData.errorStatus === undefined) {
+			// No error to clear, but still return success
+			return new Response(JSON.stringify({ success: true, id: keyIdToClear, message: "No error status to clear." }), { headers });
+		}
+
+		// Clear the error status
+		keyInfoData.errorStatus = null;
+
+		// Save back to KV
+		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(keyInfoData));
+		console.log(`Cleared error status for key ${keyIdToClear}.`);
+
+		return new Response(JSON.stringify({ success: true, id: keyIdToClear }), { headers });
+
+	} catch (error) {
+		console.error(`Error clearing error status for key ${keyIdToClear}:`, error);
+		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+		return new Response(JSON.stringify({ error: errorMessage }), { status: 500, headers });
+	}
+}
+
+
 async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionContext, resourceId?: string): Promise<Response> {
 	const headers = { 'Content-Type': 'application/json', ...corsHeaders() };
 
@@ -1122,7 +1225,8 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 							usageDate: keyInfoData.usageDate || 'N/A',
 							modelUsage: modelUsageData, 
 							categoryUsage: categoryUsageData,
-							categoryQuotas: categoryQuotas
+							categoryQuotas: categoryQuotas,
+							errorStatus: keyInfoData.errorStatus // Include error status
 						};
 					} catch (e) {
 						console.error(`Error processing key ${keyMeta.name}:`, e);
@@ -1169,7 +1273,8 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 					usageDate: '', 
 					name: keyName,
 					modelUsage: {},
-					categoryUsage: { pro: 0, flash: 0 }
+					categoryUsage: { pro: 0, flash: 0 },
+					errorStatus: null // Initialize error status
 				};
 
 				await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(newKeyInfo));
@@ -2057,6 +2162,35 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 
 	} catch (e) {
 		console.error(`Failed to force quota limit for key ${keyId}:`, e);
+	}
+	// Removed extra closing brace here
+}
+
+
+/**
+ * Records a 401 or 403 error status for a given Gemini Key ID in KV.
+ */
+async function recordKeyError(keyId: string, env: Env, status: 401 | 403): Promise<void> {
+	const keyKvName = `key:${keyId}`;
+	try {
+		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+		if (!keyInfoJson) {
+			console.warn(`Cannot record error: Key info not found for ID: ${keyId}`);
+			return;
+		}
+
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>;
+
+		// Update the error status
+		keyInfoData.errorStatus = status;
+
+		// Put the updated info back into KV
+		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(keyInfoData));
+		console.log(`Recorded error status ${status} for key ${keyId}.`);
+
+	} catch (e) {
+		console.error(`Failed to record error status for key ${keyId}:`, e);
+		// Don't rethrow here, as recording the error is secondary
 	}
 }
 
