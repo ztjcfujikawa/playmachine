@@ -1835,31 +1835,70 @@ async function handleAdminGeminiKeyErrors(request: Request, env: Env, ctx: Execu
         if (resourceId) {
           // Get errors for a specific key
           const errorKey = `${KV_KEY_GEMINI_KEY_ERRORS}:${resourceId}`;
+          console.log(`Looking up errors for specific key: ${resourceId}, KV key: ${errorKey}`);
           const errorsJson = await env.GEMINI_KEYS_KV.get(errorKey);
-          const errors = errorsJson ? JSON.parse(errorsJson) : [];
-          return new Response(JSON.stringify(errors), { headers });
+          if (!errorsJson) {
+            console.log(`No errors found for key: ${resourceId}`);
+            return new Response(JSON.stringify([]), { headers });
+          }
+          
+          try {
+            const errors = JSON.parse(errorsJson);
+            console.log(`Returning ${Array.isArray(errors) ? errors.length : 0} errors for key ${resourceId}`);
+            return new Response(JSON.stringify(Array.isArray(errors) ? errors : []), { headers });
+          } catch (e) {
+            console.error(`Error parsing errors JSON for key ${resourceId}:`, e);
+            return new Response(JSON.stringify([]), { headers });
+          }
         } else {
           // Get all keys with errors
+          console.log("Fetching all keys with errors");
           const listResult = await env.GEMINI_KEYS_KV.list({ prefix: `${KV_KEY_GEMINI_KEY_ERRORS}:` });
+          console.log(`Found ${listResult.keys.length} keys with error records`);
+          
+          if (listResult.keys.length === 0) {
+            // 如果没有找到任何错误记录，立即返回空数组
+            console.log("No keys with error records found, returning empty array");
+            return new Response(JSON.stringify([]), { headers });
+          }
+          
           const keyErrorPromises = listResult.keys.map(async (keyMeta) => {
             const keyId = keyMeta.name.replace(`${KV_KEY_GEMINI_KEY_ERRORS}:`, '');
-            const errorsJson = await env.GEMINI_KEYS_KV.get(keyMeta.name);
-            if (!errorsJson) return null;
+            console.log(`Processing error records for key: ${keyId}`);
             
             try {
-              const errors = JSON.parse(errorsJson);
-              if (!Array.isArray(errors) || errors.length === 0) return null;
+              const errorsJson = await env.GEMINI_KEYS_KV.get(keyMeta.name);
+              if (!errorsJson) {
+                console.log(`No error data found for key: ${keyId}`);
+                return null;
+              }
+              
+              let errors;
+              try {
+                errors = JSON.parse(errorsJson);
+                if (!Array.isArray(errors) || errors.length === 0) {
+                  console.log(`No valid errors array for key: ${keyId}`);
+                  return null;
+                }
+                
+                console.log(`Found ${errors.length} errors for key: ${keyId}`);
+              } catch (parseError) {
+                console.error(`Failed to parse errors JSON for key ${keyId}:`, parseError);
+                return null;
+              }
               
               // Get key info for additional context
-              const keyInfoJson = await env.GEMINI_KEYS_KV.get(`key:${keyId}`);
               let keyName = keyId;
-              if (keyInfoJson) {
-                try {
+              try {
+                const keyInfoJson = await env.GEMINI_KEYS_KV.get(`key:${keyId}`);
+                if (keyInfoJson) {
                   const keyInfo = JSON.parse(keyInfoJson);
                   keyName = keyInfo.name || keyId;
-                } catch (e) {
-                  console.error(`Error parsing key info for ${keyId}:`, e);
+                  console.log(`Retrieved key name for ${keyId}: ${keyName}`);
                 }
+              } catch (keyInfoError) {
+                console.error(`Error retrieving or parsing key info for ${keyId}:`, keyInfoError);
+                // Continue with default keyName = keyId
               }
               
               return {
@@ -1873,8 +1912,15 @@ async function handleAdminGeminiKeyErrors(request: Request, env: Env, ctx: Execu
             }
           });
           
-          const results = (await Promise.all(keyErrorPromises)).filter(item => item !== null);
-          return new Response(JSON.stringify(results), { headers });
+          try {
+            const results = (await Promise.all(keyErrorPromises)).filter(item => item !== null);
+            console.log(`Successfully collected ${results.length} key error records`);
+            return new Response(JSON.stringify(results), { headers });
+          } catch (promiseError) {
+            console.error("Error during Promise.all for keyErrorPromises:", promiseError);
+            // Return whatever results we have, even if empty
+            return new Response(JSON.stringify([]), { headers });
+          }
         }
       }
       
