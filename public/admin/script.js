@@ -979,21 +979,32 @@ function hideError(container = errorMessageDiv) {
                 });
 
                 if (result && result.success) {
-                    // Remove warning icon from card
+                    // 获取对应卡片及数据
                     const cardItem = document.querySelector(`.card-item[data-key-id="${keyId}"]`);
-                    const warningIcon = cardItem?.querySelector('.warning-icon');
-                    if (warningIcon) {
-                        warningIcon.remove();
+                    
+                    // 找到当前key的数据以获取usage值
+                    const keyData = result.updatedKey || { usage: 0 }; // 如果API返回了更新后的key数据则使用，否则默认为0
+                    
+                    // 替换警告图标容器为Total显示
+                    const warningContainer = cardItem?.querySelector('.warning-icon-container');
+                    if (warningContainer) {
+                        const totalHTML = `
+                            <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
+                                Total: ${keyData.usage || '0'}
+                            </div>
+                        `;
+                        warningContainer.outerHTML = totalHTML;
                     }
+                    
                     // Remove error status text from modal
                     const errorStatusP = button.closest('.modal-content').querySelector('p.text-red-600');
-                     if (errorStatusP) {
+                    if (errorStatusP) {
                         errorStatusP.remove();
                     }
+                    
                     // Remove the button itself
                     button.remove();
                     showSuccess(`Error status cleared for key ${keyId}.`);
-                    // Optionally update the key data in cache if needed, or just rely on next reload
                 } else {
                     // Show error within the modal
                     if (modalErrorContainer && modalErrorSpan) {
