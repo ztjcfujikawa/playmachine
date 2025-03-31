@@ -254,6 +254,17 @@
         body[data-theme="dark"] #cancel-individual-quota:hover {
             background-color: #718096 !important; /* Lighter gray background on hover */
         }
+
+        /* Dark mode adjustments for Ignore Error button */
+        body[data-theme="dark"] .clear-gemini-key-error {
+            color: #faf089 !important; /* Lighter yellow (Tailwind yellow-300) */
+            border-color: #faf089 !important;
+        }
+        body[data-theme="dark"] .clear-gemini-key-error:hover {
+            color: #f6e05e !important; /* Slightly darker yellow on hover (Tailwind yellow-400) */
+            border-color: #f6e05e !important;
+            background-color: rgba(250, 240, 137, 0.1) !important; /* Optional: subtle background on hover */
+        }
     </style>
     <script>
         (function() {

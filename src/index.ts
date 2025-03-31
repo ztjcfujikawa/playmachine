@@ -554,7 +554,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	// Get and store Worker API Key for later use
 	workerApiKey = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
 
-	// --- Key Selection (使用基于权重的选择) ---
+	// --- Key Selection (Using weighted selection) ---
 	const selectedKey = await getNextAvailableGeminiKey(env, ctx, requestedModelId);
 	if (!selectedKey) {
 		return new Response(JSON.stringify({ error: "No available Gemini API Key configured." }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
@@ -1874,9 +1874,9 @@ function handleLogoutRequest(): Response {
 // --- Gemini Key Management ---
 
 /**
- * 根据权重选择API密钥。权重基于密钥的使用次数，使用次数越少权重越高。
- * 权重计算考虑请求的模型ID，不同模型有独立的使用计数。
- * 不在此处检查配额，配额检查在handleV1ChatCompletions中进行。
+ * Selects an API key based on weight. Weight is based on the number of times the key has been used; the fewer times used, the higher the weight.
+ * Weight calculation considers the requested model ID; different models have independent usage counts.
+ * Quota checking is not performed here; it is done in handleV1ChatCompletions.
  */
 async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, requestedModelId?: string): Promise<{ id: string; key: string } | null> {
 	try {
@@ -1888,10 +1888,10 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			return null;
 		}
 
-		// 获取今天的日期（洛杉矶时区）
+		// Get today's date (Los Angeles timezone)
 		const todayInLA = getTodayInLA();
 		
-		// 获取每个密钥的信息并计算权重
+		// Get information for each key and calculate weight
 		const keysWithWeights: Array<{
 			id: string;
 			key: string;
@@ -1910,21 +1910,21 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			}
 
 			try {
-				// 解析KV中的JSON字符串
+				// Parse the JSON string from KV
 				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 				
-				// 如果密钥的使用日期不是今天，则其使用量应被视为0
+				// If the key's usage date is not today, its usage should be considered 0
 				const isCurrentDay = keyInfoData.usageDate === todayInLA;
 				const totalUsage = isCurrentDay ? (keyInfoData.usage || 0) : 0;
 				
-				// 获取特定模型的使用量
+				// Get the usage count for the specific model
 				let modelSpecificUsage = 0;
 				if (requestedModelId && isCurrentDay && keyInfoData.modelUsage) {
 					modelSpecificUsage = keyInfoData.modelUsage[requestedModelId] || 0;
 				}
 				
-				// 计算权重 - 权重与使用量成反比
-				// 使用小值1防止除以零，并使用指数函数使差异更加明显
+				// Calculate weight - weight is inversely proportional to usage
+				// Use a small value 1 to prevent division by zero and use an exponential function to make the difference more pronounced
 				const baseWeight = Math.exp(-modelSpecificUsage / 10) * 100;
 				
 				keysWithWeights.push({
@@ -1940,29 +1940,29 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			}
 		}
 
-		// 检查是否有可用的密钥
+		// Check if there are any available keys
 		if (keysWithWeights.length === 0) {
 			console.error("No usable Gemini keys found.");
 			return null;
 		}
 
-		// 按权重排序（从高到低）并记录日志
+		// Sort by weight (high to low) and log
 		keysWithWeights.sort((a, b) => b.weight - a.weight);
 		
-		// 记录排序结果（用于调试）
+		// Log the sorting results (for debugging)
 		console.log("Keys sorted by weight (higher weight = higher priority):");
 		keysWithWeights.forEach(k => {
 			console.log(`Key: ${k.id}, Model usage: ${k.modelUsage}, Total usage: ${k.usage}, Weight: ${k.weight.toFixed(2)}`);
 		});
 
-		// 使用加权随机选择
-		// 1. 计算权重总和
+		// Use weighted random selection
+		// 1. Calculate the sum of weights
 		const totalWeight = keysWithWeights.reduce((sum, key) => sum + key.weight, 0);
 		
-		// 2. 生成0到totalWeight之间的随机数
+		// 2. Generate a random number between 0 and totalWeight
 		const randomValue = Math.random() * totalWeight;
 		
-		// 3. 通过权重选择密钥
+		// 3. Select the key based on weight
 		let cumulativeWeight = 0;
 		for (const keyInfo of keysWithWeights) {
 			cumulativeWeight += keyInfo.weight;
@@ -1975,7 +1975,7 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			}
 		}
 		
-		// 如果由于浮点误差而未选择任何密钥，则返回权重最高的密钥
+		// If no key is selected due to floating-point errors, return the key with the highest weight
 		console.log(`Fallback: Selected highest weighted key: ${keysWithWeights[0].id}`);
 		return {
 			id: keysWithWeights[0].id,
