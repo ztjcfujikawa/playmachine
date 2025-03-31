@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let cachedModels = [];
     let cachedGeminiModels = []; // Add cache for available Gemini models
     let cachedCategoryQuotas = { proQuota: 0, flashQuota: 0 };
+    let cachedKeyErrors = []; // 用于存储API密钥错误信息
 
     // --- Utility Functions ---
     function showLoading() {
@@ -232,13 +233,26 @@ function hideError(container = errorMessageDiv) {
             cardItem.className = 'card-item p-4 border rounded-md bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer';
             cardItem.dataset.keyId = key.id;
 
+            // 检查这个密钥是否有错误通知
+            const keyErrors = cachedKeyErrors.find(item => item.keyId === key.id);
+            const hasErrors = keyErrors && keyErrors.errors && keyErrors.errors.length > 0;
+
             // Simple card content, displaying basic information only
             cardItem.innerHTML = `
                 <div class="flex items-center justify-between">
-                    <div>
+                    <div class="flex-1">
                         <h3 class="font-medium text-gray-900">${key.name || key.id}</h3>
                         <p class="text-xs text-gray-500">ID: ${key.id} | ${key.keyPreview}</p>
                     </div>
+                    ${hasErrors ? `
+                    <div class="mx-2">
+                        <div class="key-error-indicator cursor-pointer" data-key-id="${key.id}">
+                            <svg class="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                            </svg>
+                        </div>
+                    </div>
+                    ` : ''}
                     <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
                         Total: ${key.usage}
                     </div>
@@ -695,9 +709,42 @@ function hideError(container = errorMessageDiv) {
     }
 
     // --- Data Loading Functions ---
+    // 加载API密钥的认证错误信息
+    async function loadGeminiKeyErrors() {
+        const errors = await apiFetch('/gemini-key-errors');
+        if (errors && Array.isArray(errors)) {
+            cachedKeyErrors = errors;
+            console.log(`Loaded ${errors.length} API key error records`);
+            return errors;
+        } else {
+            console.warn("Failed to load API key errors or no errors found");
+            cachedKeyErrors = [];
+            return [];
+        }
+    }
+    
+    // 忽略/删除特定API密钥的错误记录
+    async function dismissKeyErrors(keyId) {
+        if (!keyId) return false;
+        
+        const result = await apiFetch(`/gemini-key-errors/${encodeURIComponent(keyId)}`, {
+            method: 'DELETE'
+        });
+        
+        if (result && result.success) {
+            // 从缓存中移除该密钥的错误
+            cachedKeyErrors = cachedKeyErrors.filter(item => item.keyId !== keyId);
+            showSuccess(`错误通知已清除`);
+            return true;
+        }
+        return false;
+    }
+    
     async function loadGeminiKeys() {
         const keys = await apiFetch('/gemini-keys');
         if (keys) {
+            // 同时加载密钥错误信息
+            await loadGeminiKeyErrors();
             renderGeminiKeys(keys);
         } else {
              geminiKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Gemini keys.</p>';
@@ -1250,6 +1297,107 @@ function hideError(container = errorMessageDiv) {
             return false;
         }
     }
+
+    // --- 错误提醒处理 ---
+    // 创建并显示错误通知弹窗
+    function showKeyErrorModal(keyId) {
+        // 查找这个密钥的错误记录
+        const keyErrorData = cachedKeyErrors.find(item => item.keyId === keyId);
+        if (!keyErrorData || !keyErrorData.errors || keyErrorData.errors.length === 0) {
+            console.warn(`No errors found for key ID: ${keyId}`);
+            return;
+        }
+        
+        // 创建错误通知弹窗
+        const errorModal = document.createElement('div');
+        errorModal.className = 'fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50';
+        errorModal.id = `error-modal-${keyId}`;
+        
+        // 获取最近的错误记录（按时间戳排序）
+        const errors = [...keyErrorData.errors].sort((a, b) => b.timestamp - a.timestamp);
+        
+        // 构建弹窗内容
+        errorModal.innerHTML = `
+            <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">API 密钥认证错误</h2>
+                    <button class="close-error-modal text-gray-500 hover:text-gray-800">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div class="mb-4">
+                    <p class="text-red-600 font-medium">密钥 ID: ${keyId}</p>
+                    <p class="text-sm text-gray-600">以下错误可能表明API密钥已失效或被撤销</p>
+                </div>
+                
+                <div class="bg-red-50 p-3 rounded mb-4">
+                    ${errors.map(error => `
+                        <div class="mb-2 border-b pb-2 border-red-100">
+                            <p class="font-medium">错误码: ${error.errorCode}</p>
+                            <p class="text-sm text-gray-600">时间: ${new Date(error.timestamp).toLocaleString()}</p>
+                            ${error.message ? `<p class="text-sm mt-1 text-gray-800">${error.message}</p>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+                
+                <div class="flex justify-end">
+                    <button data-key-id="${keyId}" class="ignore-errors-btn bg-blue-500 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded">
+                        忽略提醒
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // 添加到DOM
+        document.body.appendChild(errorModal);
+        
+        // 添加关闭事件
+        const closeBtn = errorModal.querySelector('.close-error-modal');
+        closeBtn.addEventListener('click', () => {
+            errorModal.remove();
+        });
+        
+        // 添加点击外部关闭
+        errorModal.addEventListener('click', (e) => {
+            if (e.target === errorModal) {
+                errorModal.remove();
+            }
+        });
+        
+        // 添加忽略提醒事件
+        const ignoreBtn = errorModal.querySelector('.ignore-errors-btn');
+        ignoreBtn.addEventListener('click', async () => {
+            const result = await dismissKeyErrors(keyId);
+            if (result) {
+                // 移除错误图标
+                const errorIndicators = document.querySelectorAll(`.key-error-indicator[data-key-id="${keyId}"]`);
+                errorIndicators.forEach(indicator => {
+                    indicator.closest('.mx-2').remove();
+                });
+                // 关闭弹窗
+                errorModal.remove();
+            }
+        });
+    }
+
+    // 添加错误图标点击事件处理
+    document.addEventListener('click', (e) => {
+        // 检查是否点击了错误指示图标
+        if (e.target.closest('.key-error-indicator')) {
+            // 获取事件冒泡过程中的错误指示器元素
+            const indicator = e.target.closest('.key-error-indicator');
+            const keyId = indicator.dataset.keyId;
+            
+            // 阻止事件冒泡，避免触发卡片的点击事件
+            e.stopPropagation();
+            
+            // 显示错误通知弹窗
+            showKeyErrorModal(keyId);
+        }
+    });
 
     // --- Initial Load ---
     async function initialLoad() {
