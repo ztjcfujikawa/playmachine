@@ -341,7 +341,7 @@ function hideError(container = errorMessageDiv) {
             if (proModelsWithIndividualQuota.length > 0) {
             proModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
-                    // 检查是否是对象结构，如果是则提取count属性
+                    // Check if it's an object structure, if so, extract the count property
                     const count = typeof key.modelUsage?.[modelId] === 'object' ? 
                         (key.modelUsage?.[modelId]?.count || 0) : 
                         (key.modelUsage?.[modelId] || 0);
@@ -398,7 +398,7 @@ function hideError(container = errorMessageDiv) {
             if (flashModelsWithIndividualQuota.length > 0) {
                 flashModelsWithIndividualQuota.forEach(model => {
                     const modelId = model.id;
-                    // 检查是否是对象结构，如果是则提取count属性
+                    // Check if it's an object structure, if so, extract the count property
                     const count = typeof key.modelUsage?.[modelId] === 'object' ? 
                         (key.modelUsage?.[modelId]?.count || 0) : 
                         (key.modelUsage?.[modelId] || 0);
@@ -979,13 +979,13 @@ function hideError(container = errorMessageDiv) {
                 });
 
                 if (result && result.success) {
-                    // 获取对应卡片及数据
+                    // Get the corresponding card and data
                     const cardItem = document.querySelector(`.card-item[data-key-id="${keyId}"]`);
                     
-                    // 找到当前key的数据以获取usage值
-                    const keyData = result.updatedKey || { usage: 0 }; // 如果API返回了更新后的key数据则使用，否则默认为0
+                    // Find the current key's data to get the usage value
+                    const keyData = result.updatedKey || { usage: 0 }; // Use the updated key data from the API response if available, otherwise default to 0
                     
-                    // 替换警告图标容器为Total显示
+                    // Replace the warning icon container with the Total display
                     const warningContainer = cardItem?.querySelector('.warning-icon-container');
                     if (warningContainer) {
                         const totalHTML = `
