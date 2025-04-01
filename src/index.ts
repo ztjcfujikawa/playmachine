@@ -234,8 +234,8 @@ function parseDataUri(dataUri: string): { mimeType: string; data: string } | nul
 }
 
 // Helper to transform OpenAI request body parts (messages, tools) to Gemini format
-// Added requestedModelId parameter
-function transformOpenAiToGemini(requestBody: any, requestedModelId?: string): { contents: any[]; systemInstruction?: any; tools?: any[] } {
+// Added requestedModelId and safetyEnabled parameters
+function transformOpenAiToGemini(requestBody: any, requestedModelId?: string, safetyEnabled: boolean = true): { contents: any[]; systemInstruction?: any; tools?: any[] } {
 	const messages = requestBody.messages || [];
 	const openAiTools = requestBody.tools;
 
@@ -255,25 +255,34 @@ function transformOpenAiToGemini(requestBody: any, requestedModelId?: string): {
 				role = 'model';
 				break;
 			case 'system':
-				// Check if the model is gemma-based
-				if (requestedModelId && requestedModelId.startsWith('gemma')) {
-					// If gemma, treat system prompt as a user message
-					console.log(`Gemma model detected (${requestedModelId}). Treating system message as user message.`);
+				// New logic: Check safetyEnabled first
+				if (!safetyEnabled) {
+					// If safety is OFF, always treat system prompt as a user message
+					console.log(`Safety disabled. Treating system message as user message.`);
 					role = 'user';
 					// Content processing for 'user' role will happen below
 				} else {
-					// Original logic for non-gemma models: create systemInstruction
-					if (typeof msg.content === 'string') {
-						systemInstruction = { role: "system", parts: [{ text: msg.content }] };
-					} else if (Array.isArray(msg.content)) { // Handle complex system prompts if needed
-						const textContent = msg.content.find((p: any) => p.type === 'text')?.text;
-						if (textContent) {
-							systemInstruction = { role: "system", parts: [{ text: textContent }] };
+					// Safety is ON, apply original logic (Gemma check)
+					if (requestedModelId && requestedModelId.startsWith('gemma')) {
+						// If gemma, treat system prompt as a user message
+						console.log(`Gemma model detected (${requestedModelId}). Treating system message as user message.`);
+						role = 'user';
+						// Content processing for 'user' role will happen below
+					} else {
+						// Original logic for non-gemma models with safety ON: create systemInstruction
+						if (typeof msg.content === 'string') {
+							systemInstruction = { role: "system", parts: [{ text: msg.content }] };
+						} else if (Array.isArray(msg.content)) { // Handle complex system prompts if needed
+							const textContent = msg.content.find((p: any) => p.type === 'text')?.text;
+							if (textContent) {
+								systemInstruction = { role: "system", parts: [{ text: textContent }] };
+							}
 						}
+						// Skip adding this message to 'contents' when creating systemInstruction
+						return; 
 					}
-					return; // Skip adding this message to 'contents' for non-gemma
 				}
-				break; // Break for 'system' role (gemma case falls through to content processing)
+				break; // Break for 'system' role (both safety off and gemma cases fall through to content processing)
 			default:
 				console.warn(`Unknown role encountered: ${msg.role}. Skipping message.`);
 				return; // Skip unknown roles
@@ -649,14 +658,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	// --- End New Quota Check ---
 
 
-	// --- Transform Request Body ---
-	// Pass requestedModelId to the transformation function
-	const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody, requestedModelId);
-	if (contents.length === 0 && !systemInstruction) {
-		// Require at least one message even if tools are present
-		return new Response(JSON.stringify({ error: "No valid user, assistant messages found (system messages converted for gemma)." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
-	}
-
+	// --- Determine Safety Setting ---
 	let safetyEnabled = true; 
 	
 	if (workerApiKey) {
@@ -669,8 +671,16 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				}
 			} catch (e) {
 				console.error("Error parsing safety settings:", e);
+				// Keep safetyEnabled = true on error
 			}
 		}
+	}
+
+	// --- Transform Request Body ---
+	// Pass requestedModelId and safetyEnabled to the transformation function
+	const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody, requestedModelId, safetyEnabled);
+	if (contents.length === 0 && !systemInstruction) {
+		return new Response(JSON.stringify({ error: "No valid user, assistant messages found (system messages converted based on safety/gemma)." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 	}
 	
 	const geminiRequestBody: any = {
