@@ -1878,9 +1878,9 @@ function handleLogoutRequest(): Response {
 // --- Gemini Key Management ---
 
 /**
- * Selects the next available Gemini API key using a simple round-robin approach,
- * excluding the key used in the immediately preceding request (if more than one key is available).
- * Also excludes keys marked with 401/403 errors.
+ * Selects the next available Gemini API key using a sequential rotation approach.
+ * Remembers the last used key index and selects the next available key in sequence.
+ * Skips keys with error status (401/403) or those that have reached quota limits.
  * Quota checking is not performed here; it is done in handleV1ChatCompletions.
  */
 async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, requestedModelId?: string): Promise<{ id: string; key: string } | null> {
@@ -1894,124 +1894,92 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			return null;
 		}
 
-		// 2. Get the ID of the key used last time
-		const lastUsedKeyId = await env.GEMINI_KEYS_KV.get(KV_KEY_LAST_USED_GEMINI_KEY_ID);
-
-		// 3. Filter out keys with error status (401/403)
-		const validKeyIdsPromises = allKeyIds.map(async (keyId) => {
+		// 2. Get the current key index (or initialize to -1 if not exists)
+		const currentIndexStr = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_INDEX);
+		let currentIndex = currentIndexStr ? parseInt(currentIndexStr, 10) : -1;
+		
+		// Ensure currentIndex is valid, default to -1 if parsing fails
+		if (isNaN(currentIndex) || currentIndex < -1 || currentIndex >= allKeyIds.length) {
+			currentIndex = -1;
+		}
+		
+		// 3. Filter to find valid keys with status and model/category usage
+		// We create a comprehensive map of key IDs to their validity status and info
+		const keyInfoMap = new Map<string, { valid: boolean; keyValue: string | null; }>();
+		
+		// Get all key information concurrently
+		const keyInfoPromises = allKeyIds.map(async (keyId) => {
 			const keyKvName = `key:${keyId}`;
 			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
-			if (!keyInfoJson) return null; // Skip if key info doesn't exist
+			
+			if (!keyInfoJson) {
+				keyInfoMap.set(keyId, { valid: false, keyValue: null });
+				return;
+			}
+			
 			try {
 				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+				
+				// Check for 401/403 errors
 				if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
 					console.log(`Excluding key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
-					return null; // Exclude errored keys
+					keyInfoMap.set(keyId, { valid: false, keyValue: null });
+					return;
 				}
-				return keyId; // Keep valid key ID
+				
+				// Store valid key data
+				keyInfoMap.set(keyId, { 
+					valid: true, 
+					keyValue: keyInfoData.key || null 
+				});
 			} catch (parseError) {
-				console.error(`Failed to parse key info for ID: ${keyId} during filtering. Skipping. Error:`, parseError);
-				return null;
+				console.error(`Failed to parse key info for ID: ${keyId}. Skipping. Error:`, parseError);
+				keyInfoMap.set(keyId, { valid: false, keyValue: null });
 			}
 		});
-
-		const validKeyIds = (await Promise.all(validKeyIdsPromises)).filter((id): id is string => id !== null);
-
-		if (validKeyIds.length === 0) {
-			console.error("No valid (non-errored) Gemini keys available.");
-			return null;
-		}
-
-		// 4. Determine the pool of eligible keys for this request
-		let eligibleKeyIds = validKeyIds;
-		if (validKeyIds.length > 1 && lastUsedKeyId) {
-			const withoutLastUsed = validKeyIds.filter(id => id !== lastUsedKeyId);
-			// If filtering out the last used key leaves the list empty,
-			// it means the last used key was the *only* valid one remaining.
-			// In this case, we must use it again.
-			if (withoutLastUsed.length > 0) {
-				eligibleKeyIds = withoutLastUsed;
-				console.log(`Excluding last used key (${lastUsedKeyId}) from selection pool.`);
-			} else {
-				console.log(`Last used key (${lastUsedKeyId}) is the only valid key available. Re-using it.`);
-				// Keep eligibleKeyIds as validKeyIds
-			}
-		}
-
-		// 5. Select the next key sequentially (round-robin) from the eligible pool
+		
+		// Wait for all key info to be processed
+		await Promise.all(keyInfoPromises);
+		
+		// 4. Find the next valid key in rotation order, starting after the current index
 		let selectedKeyId: string | null = null;
-
-		if (eligibleKeyIds.length === 1) {
-			// If only one eligible key, use it
-			selectedKeyId = eligibleKeyIds[0];
-			console.log(`Only one eligible key available (${selectedKeyId}). Selecting it.`);
-		} else {
-			// Find the index of the last used key within the *eligible* list
-			const lastUsedIndexInEligible = lastUsedKeyId ? eligibleKeyIds.indexOf(lastUsedKeyId) : -1;
-
-			// Calculate the next index, wrapping around
-			const nextIndex = (lastUsedIndexInEligible + 1) % eligibleKeyIds.length;
-			selectedKeyId = eligibleKeyIds[nextIndex];
-			console.log(`Selecting next key sequentially. Last used (in eligible): ${lastUsedKeyId} (index ${lastUsedIndexInEligible}). Next index: ${nextIndex}. Selected ID: ${selectedKeyId}`);
+		let loopCount = 0;
+		const maxLoops = allKeyIds.length; // Prevent infinite loops
+		
+		while (!selectedKeyId && loopCount < maxLoops) {
+			// Move to the next index, wrapping around if necessary
+			currentIndex = (currentIndex + 1) % allKeyIds.length;
+			
+			const candidateKeyId = allKeyIds[currentIndex];
+			const keyInfo = keyInfoMap.get(candidateKeyId);
+			
+			// Selected a key if it's valid and has a key value
+			if (keyInfo && keyInfo.valid && keyInfo.keyValue) {
+				selectedKeyId = candidateKeyId;
+			}
+			
+			loopCount++;
 		}
 
-
+		// No valid key found after checking all keys
 		if (!selectedKeyId) {
-			// This should theoretically not happen if eligibleKeyIds is not empty, but as a safeguard:
-			console.error("Failed to select a key ID sequentially, falling back to the first eligible key.");
-			selectedKeyId = eligibleKeyIds[0]; // Fallback
-		}
-
-
-		// 6. Retrieve the actual key value for the selected ID
-		const selectedKeyKvName = `key:${selectedKeyId}`;
-		const selectedKeyInfoJson = await env.GEMINI_KEYS_KV.get(selectedKeyKvName);
-		if (!selectedKeyInfoJson) {
-			console.error(`Selected key ID ${selectedKeyId} info disappeared from KV. This should not happen.`);
-			// Fallback: try selecting another random one? Or just return null?
-			// Let's try returning null for now to indicate a failure state.
-			return null;
-		}
-		const selectedKeyInfoJson = await env.GEMINI_KEYS_KV.get(selectedKeyKvName);
-		if (!selectedKeyInfoJson) {
-			console.error(`Selected key ID ${selectedKeyId} info disappeared from KV. This should not happen.`);
-			// Fallback: Try the first available valid key?
-			const fallbackKeyId = validKeyIds[0]; // Use the first *valid* key as fallback
-			const fallbackKvName = `key:${fallbackKeyId}`;
-			const fallbackKeyInfoJson = await env.GEMINI_KEYS_KV.get(fallbackKvName);
-			if(!fallbackKeyInfoJson) {
-				console.error("Fallback key info also missing. No keys available.");
-				return null;
-			}
-			const fallbackKeyInfoData = JSON.parse(fallbackKeyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
-			const fallbackKeyValue = fallbackKeyInfoData.key;
-			if (!fallbackKeyValue) {
-				console.error(`Fallback key ID ${fallbackKeyId} also has no key value stored.`);
-				return null;
-			}
-			console.warn(`Using fallback key: ${fallbackKeyId}`);
-			selectedKeyId = fallbackKeyId; // Update selectedKeyId to the fallback
-			// Store the fallback key ID for the *next* request
-			ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
-			return { id: selectedKeyId, key: fallbackKeyValue };
-		}
-
-		const selectedKeyInfoData = JSON.parse(selectedKeyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
-		const selectedKeyValue = selectedKeyInfoData.key;
-
-		if (!selectedKeyValue) {
-			console.error(`Selected key ID ${selectedKeyId} has no 'key' value stored in KV.`);
+			console.error("No valid Gemini keys available after checking all keys.");
 			return null;
 		}
 
-		// 7. Store the selected key ID for the *next* request to potentially exclude
-		// Run this in the background
+		// Get the key value for the selected ID
+		const keyInfo = keyInfoMap.get(selectedKeyId)!;
+		
+		// 5. Store the current index for the next request
+		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_INDEX, currentIndex.toString()));
+		console.log(`Selected Gemini Key ID via sequential rotation: ${selectedKeyId} (index: ${currentIndex})`);
+
+		// Also store the last used key ID for backward compatibility
 		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
-		console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyId}`);
 
 		return {
 			id: selectedKeyId,
-			key: selectedKeyValue
+			key: keyInfo.keyValue!
 		};
 
 	} catch (error) {
