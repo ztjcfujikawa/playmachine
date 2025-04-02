@@ -21,7 +21,8 @@ const KV_KEY_CATEGORY_QUOTAS = "category_quotas";
 const KV_KEY_WORKER_KEYS = "worker_keys";
 const KV_KEY_WORKER_KEYS_SAFETY = "worker_keys_safety_settings";
 const KV_KEY_GEMINI_KEY_LIST = "_config:key_list";
-const KV_KEY_GEMINI_KEY_INDEX = "_config:key_index";
+const KV_KEY_GEMINI_KEY_INDEX = "_config:key_index"; // Note: This index might become less relevant with the new selection logic
+const KV_KEY_LAST_USED_GEMINI_KEY = "_config:last_used_key_id"; // New KV key for load balancing
 
 // --- Interfaces ---
 // Define the structure for model configuration
@@ -47,6 +48,7 @@ interface GeminiKeyInfo {
 	categoryUsage?: { pro: number; flash: number };
 	name?: string;
 	errorStatus?: 401 | 403 | null; // Added to track 401/403 errors
+	consecutive429Count?: number; // New: Track consecutive 429 errors for this key
 }
 
 /**
@@ -756,32 +758,27 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 		// Increment usage count (only if successful or specific errors like 429?)
 		if (geminiResponse.ok) {
 			// Pass model category to increment usage correctly
+			// Successful request: Increment usage and reset consecutive 429 count
 			ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory));
 		} else {
 			// Log error from Gemini
 			const errorBody = await geminiResponse.text();
 			console.error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBody);
 
-			// --- New: Handle 429 Too Many Requests ---
+			// --- Modified: Handle 429 Too Many Requests (Consecutive Count) ---
 			if (geminiResponse.status === 429) {
-				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Forcing quota to limit for today.`);
-				// Force set the quota to its limit for this category/model on this key for today
-				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
+				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Incrementing consecutive 429 count.`);
+				// Increment consecutive 429 count and check if limit should be forced
+				ctx.waitUntil(handleConsecutive429(selectedKey.id, env, modelCategory, requestedModelId));
 			}
-			// --- New: Handle 401/403 for error tracking ---
-			if (geminiResponse.status === 401 || geminiResponse.status === 403) {
+			// --- Handle 401/403 for error tracking ---
+			else if (geminiResponse.status === 401 || geminiResponse.status === 403) {
 				console.warn(`Received ${geminiResponse.status} from Gemini for key ${selectedKey.id}. Recording error status.`);
 				ctx.waitUntil(recordKeyError(selectedKey.id, env, geminiResponse.status as 401 | 403));
 			}
-			// --- End New 401/403 Handling ---
+			// --- End 401/403 Handling ---
 
-			// --- Existing 429 Handling ---
-			if (geminiResponse.status === 429) {
-				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Forcing quota to limit for today.`);
-				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
-			}
-			// --- End Existing 429 Handling ---
-
+			// Return the Gemini error response
 			return new Response(JSON.stringify({
 				error: {
 					message: `Gemini API Error: ${geminiResponse.statusText} - ${errorBody}`,
@@ -1292,7 +1289,8 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 					name: keyName,
 					modelUsage: {},
 					categoryUsage: { pro: 0, flash: 0 },
-					errorStatus: null // Initialize error status
+					errorStatus: null, // Initialize error status
+					consecutive429Count: 0 // Initialize consecutive 429 count
 				};
 
 				await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(newKeyInfo));
@@ -1887,33 +1885,55 @@ function handleLogoutRequest(): Response {
  * Selects an API key based on weight. Weight is based on the number of times the key has been used; the fewer times used, the higher the weight.
  * Weight calculation considers the requested model ID; different models have independent usage counts.
  * Quota checking is not performed here; it is done in handleV1ChatCompletions.
+ * Implements logic to avoid reusing the last used key if possible.
  */
 async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, requestedModelId?: string): Promise<{ id: string; key: string } | null> {
 	try {
-		const keyListJson = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST);
-		const keyList: string[] = keyListJson ? JSON.parse(keyListJson) : [];
+		// Fetch key list and last used key ID in parallel
+		const [keyListJson, lastUsedKeyId] = await Promise.all([
+			env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST),
+			env.GEMINI_KEYS_KV.get(KV_KEY_LAST_USED_GEMINI_KEY)
+		]);
+
+		let keyList: string[] = keyListJson ? JSON.parse(keyListJson) : [];
 
 		if (keyList.length === 0) {
 			console.error("No Gemini keys configured in KV under", KV_KEY_GEMINI_KEY_LIST);
 			return null;
 		}
 
+		// --- New: Filter out last used key if more than one key exists ---
+		let candidateKeyList = keyList;
+		if (keyList.length > 1 && lastUsedKeyId) {
+			candidateKeyList = keyList.filter(id => id !== lastUsedKeyId);
+			// If filtering removed all keys (should only happen if lastUsedKeyId was the only one listed somehow), fall back to the full list
+			if (candidateKeyList.length === 0) {
+				console.warn(`Filtering last used key (${lastUsedKeyId}) resulted in empty list. Falling back to full key list.`);
+				candidateKeyList = keyList;
+			} else {
+				console.log(`Excluding last used key (${lastUsedKeyId}) from initial selection.`);
+			}
+		}
+		// --- End New ---
+
+
 		// Get today's date (Los Angeles timezone)
 		const todayInLA = getTodayInLA();
-		
-		// Get information for each key and calculate weight
+
+		// Get information for each CANDIDATE key and calculate weight
 		const keysWithWeights: Array<{
 			id: string;
 			key: string;
 			weight: number;
-			usage: number;
-			modelUsage: number;
+			usage: number; // Total usage today
+			modelUsage: number; // Specific model usage today
+			consecutive429: number; // Current consecutive 429 count
 		}> = [];
 
-		for (const keyId of keyList) {
+		for (const keyId of candidateKeyList) { // Iterate over the filtered list
 			const keyKvName = `key:${keyId}`;
 			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
-			
+
 			if (!keyInfoJson) {
 				console.warn(`Key info not found for ID: ${keyId} listed in ${KV_KEY_GEMINI_KEY_LIST}. Skipping.`);
 				continue;
@@ -1921,35 +1941,38 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 
 			try {
 				// Parse the JSON string from KV
-				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+				const keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>; // Use full interface now
 
-				// --- New: Skip keys with 401/403 errors ---
+				// --- Skip keys with 401/403 errors ---
 				if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
 					console.log(`Skipping key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
 					continue; // Skip this key
 				}
-				// --- End New ---
-				
+				// --- End Skip ---
+
 				// If the key's usage date is not today, its usage should be considered 0
 				const isCurrentDay = keyInfoData.usageDate === todayInLA;
 				const totalUsage = isCurrentDay ? (keyInfoData.usage || 0) : 0;
-				
+				const consecutive429 = isCurrentDay ? (keyInfoData.consecutive429Count || 0) : 0;
+
 				// Get the usage count for the specific model
 				let modelSpecificUsage = 0;
 				if (requestedModelId && isCurrentDay && keyInfoData.modelUsage) {
 					modelSpecificUsage = keyInfoData.modelUsage[requestedModelId] || 0;
 				}
-				
+
 				// Calculate weight - weight is inversely proportional to usage
 				// Use a small value 1 to prevent division by zero and use an exponential function to make the difference more pronounced
+				// Reduce weight slightly for keys that have had recent 429s, even if below threshold? (Optional)
 				const baseWeight = Math.exp(-modelSpecificUsage / 10) * 100;
-				
+
 				keysWithWeights.push({
 					id: keyId,
 					key: keyInfoData.key || '',
 					weight: baseWeight,
 					usage: totalUsage,
-					modelUsage: modelSpecificUsage
+					modelUsage: modelSpecificUsage,
+					consecutive429: consecutive429
 				});
 			} catch (parseError) {
 				console.error(`Failed to parse key info for ID: ${keyId}. Skipping. Error:`, parseError);
@@ -1957,22 +1980,34 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			}
 		}
 
-		// Check if there are any available keys
+		// Check if there are any available keys after filtering and checking status
 		if (keysWithWeights.length === 0) {
-			console.error("No usable Gemini keys found.");
+			// If filtering removed all keys, it means only the last used key was available initially (and not errored out)
+			if (keyList.length === 1 && lastUsedKeyId === keyList[0]) {
+				console.log(`Only one key (${lastUsedKeyId}) available, using it despite being last used.`);
+				const keyInfoJson = await env.GEMINI_KEYS_KV.get(`key:${lastUsedKeyId}`);
+				if (keyInfoJson) {
+					const keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>;
+					if (keyInfoData.key && keyInfoData.errorStatus !== 401 && keyInfoData.errorStatus !== 403) {
+						return { id: lastUsedKeyId, key: keyInfoData.key };
+					}
+				}
+			}
+			// Otherwise, no usable keys found
+			console.error("No usable Gemini keys found after filtering and status checks.");
 			return null;
 		}
 
 		// Sort by weight (high to low) and log
 		keysWithWeights.sort((a, b) => b.weight - a.weight);
-		
+
 		// Log the sorting results (for debugging)
-		console.log("Keys sorted by weight (higher weight = higher priority):");
+		console.log("Candidate keys sorted by weight (higher weight = higher priority):");
 		keysWithWeights.forEach(k => {
-			console.log(`Key: ${k.id}, Model usage: ${k.modelUsage}, Total usage: ${k.usage}, Weight: ${k.weight.toFixed(2)}`);
+			console.log(`Key: ${k.id}, Model usage: ${k.modelUsage}, Total usage: ${k.usage}, Weight: ${k.weight.toFixed(2)}, Consecutive 429: ${k.consecutive429}`);
 		});
 
-		// Use weighted random selection
+		// Use weighted random selection on the filtered & weighted list
 		// 1. Calculate the sum of weights
 		const totalWeight = keysWithWeights.reduce((sum, key) => sum + key.weight, 0);
 		
@@ -2009,10 +2044,19 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
  * Increments the usage count for a given Gemini Key ID in KV.
  * Resets the count if the date has changed.
  * Tracks usage per model and per category (Pro/Flash/Custom).
+ * Resets consecutive 429 count on success.
+ * Updates the last used key ID.
  */
 async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, category?: 'Pro' | 'Flash' | 'Custom'): Promise<void> {
 	const keyKvName = `key:${keyId}`;
 	try {
+		// --- Update Last Used Key ID ---
+		// Do this first, even if the rest fails, to influence the next selection
+		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY, keyId));
+		console.log(`Updated last used key ID to: ${keyId}`);
+		// --- End Update ---
+
+
 		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
 		if (!keyInfoJson) {
 			console.warn(`Cannot increment usage: Key info not found for ID: ${keyId}`);
@@ -2020,8 +2064,8 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 		}
 
 		// IMPORTANT: Parse the JSON string from KV
-		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
-		
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>; // Use full interface
+
 		// Use consistent helper function for date handling
 		const todayInLA = getTodayInLA();
 
@@ -2030,57 +2074,47 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 		let usageDate = keyInfoData.usageDate || '';
 		let modelUsage = keyInfoData.modelUsage || {};
 		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
+		let consecutive429Count = keyInfoData.consecutive429Count || 0; // Initialize if missing
 
-		// Reset all usage counters for new day based on Los Angeles time
+		// Reset all usage counters AND consecutive 429 count for new day
 		if (usageDate !== todayInLA) {
-			console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage counters.`);
+			console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage and 429 counters.`);
 			currentTotalUsage = 1; // Start with 1 for this request
 			usageDate = todayInLA;
 			modelUsage = {};
 			categoryUsage = { pro: 0, flash: 0 };
+			consecutive429Count = 0; // Reset 429 count on date change
 
-			// Always record the current request in both model and category tracking
+			// Record the current request in both model and category tracking
 			if (modelId) {
 				modelUsage[modelId] = 1;
 			}
-			
-			// Update the appropriate category counter
-			if (category === 'Pro') {
-				categoryUsage.pro = 1;
-			} else if (category === 'Flash') {
-				categoryUsage.flash = 1;
-			}
-			// Custom category models are tracked in modelUsage
-		} else {
-			// Same day, just increment counters
-			currentTotalUsage += 1;
+			if (category === 'Pro') categoryUsage.pro = 1;
+			else if (category === 'Flash') categoryUsage.flash = 1;
 
-			// Update model-specific usage if model ID is provided
-			if (modelId) {
-				modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
-			}
-			
-			// Update category-specific usage based on category
-			if (category === 'Pro') {
-				categoryUsage.pro = (categoryUsage.pro || 0) + 1;
-			} else if (category === 'Flash') {
-				categoryUsage.flash = (categoryUsage.flash || 0) + 1;
-			}
-			// Custom category models are tracked in modelUsage
+		} else {
+			// Same day: increment counters and reset 429 count due to success
+			currentTotalUsage += 1;
+			consecutive429Count = 0; // Reset on success
+
+			if (modelId) modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
+			if (category === 'Pro') categoryUsage.pro = (categoryUsage.pro || 0) + 1;
+			else if (category === 'Flash') categoryUsage.flash = (categoryUsage.flash || 0) + 1;
 		}
 
 		// Create the updated object to store, preserving existing fields
-		const updatedKeyInfo: Partial<Omit<GeminiKeyInfo, 'id'>> = {
+		const updatedKeyInfo: Partial<GeminiKeyInfo> = {
 			...keyInfoData,
 			usage: currentTotalUsage,
 			usageDate: usageDate,
 			modelUsage: modelUsage,
 			categoryUsage: categoryUsage,
+			consecutive429Count: consecutive429Count, // Store the updated/reset count
 		};
 
 		// Put the updated info back into KV
 		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
-		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}`);
+		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, Consecutive 429: ${updatedKeyInfo.consecutive429Count}`);
 
 	} catch (e) {
 		console.error(`Failed to increment usage for key ${keyId}:`, e);
@@ -2188,7 +2222,60 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 	} catch (e) {
 		console.error(`Failed to force quota limit for key ${keyId}:`, e);
 	}
-	// Removed extra closing brace here
+}
+
+/**
+ * New function to handle consecutive 429 errors.
+ * Increments the count and calls forceSetQuotaToLimit if the threshold (3) is reached.
+ */
+async function handleConsecutive429(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string): Promise<void> {
+	const keyKvName = `key:${keyId}`;
+	try {
+		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+		if (!keyInfoJson) {
+			console.warn(`Cannot handle 429: Key info not found for ID: ${keyId}`);
+			return;
+		}
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<GeminiKeyInfo>;
+
+		const todayInLA = getTodayInLA();
+		let consecutive429Count = keyInfoData.consecutive429Count || 0;
+		let usageDate = keyInfoData.usageDate || '';
+
+		// Reset count if date has changed
+		if (usageDate !== todayInLA) {
+			console.log(`Date change detected during 429 handling for key ${keyId}. Resetting 429 count.`);
+			usageDate = todayInLA; // Update date for consistency if we save later
+			consecutive429Count = 0;
+			// Also reset usage counters here? No, let incrementKeyUsage handle full reset on next success.
+			// We just need to ensure the 429 count starts fresh for the new day.
+		}
+
+		// Increment the count for this 429
+		consecutive429Count += 1;
+		keyInfoData.consecutive429Count = consecutive429Count;
+		keyInfoData.usageDate = usageDate; // Ensure date is updated if it changed
+
+		console.log(`Key ${keyId} consecutive 429 count incremented to: ${consecutive429Count}`);
+
+		// Check if threshold is reached
+		if (consecutive429Count >= 3) {
+			console.warn(`Key ${keyId} reached consecutive 429 threshold (${consecutive429Count}). Forcing quota limit for category ${category}${modelId ? ` / model ${modelId}` : ''}.`);
+			// Call the existing function to force the limit for the specific category/model
+			await forceSetQuotaToLimit(keyId, env, category, modelId);
+			// We don't need to save keyInfoData again here, as forceSetQuotaToLimit will save its changes.
+			// However, forceSetQuotaToLimit doesn't currently save the 429 count. Let's modify it or save here.
+			// Let's save here to ensure the count is persisted even if forceSetQuotaToLimit has issues.
+			await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(keyInfoData));
+
+		} else {
+			// Threshold not reached, just save the incremented count
+			await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(keyInfoData));
+		}
+
+	} catch (e) {
+		console.error(`Failed to handle consecutive 429 for key ${keyId}:`, e);
+	}
 }
 
 
