@@ -633,7 +633,8 @@ function hideError(container = errorMessageDiv) {
         const style = document.createElement('style');
         style.textContent = `
             .toggle-checkbox:checked {
-                transform: translateX(100%);
+                /* Adjusted translation to keep handle within bounds */
+                transform: translateX(1rem); /* Was 100% */
                 border-color: #68D391;
             }
             .toggle-checkbox:checked + .toggle-label {
