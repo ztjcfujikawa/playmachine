@@ -21,7 +21,8 @@ const KV_KEY_CATEGORY_QUOTAS = "category_quotas";
 const KV_KEY_WORKER_KEYS = "worker_keys";
 const KV_KEY_WORKER_KEYS_SAFETY = "worker_keys_safety_settings";
 const KV_KEY_GEMINI_KEY_LIST = "_config:key_list";
-const KV_KEY_GEMINI_KEY_INDEX = "_config:key_index";
+const KV_KEY_GEMINI_KEY_INDEX = "_config:key_index"; // Note: This index is no longer used by the new logic but kept for potential backward compatibility or other uses.
+const KV_KEY_LAST_USED_GEMINI_KEY_ID = "_internal:last_used_gemini_key_id"; // Stores the ID of the last used key
 
 // --- Interfaces ---
 // Define the structure for model configuration
@@ -1878,119 +1879,95 @@ function handleLogoutRequest(): Response {
 // --- Gemini Key Management ---
 
 /**
- * Selects an API key based on weight. Weight is based on the number of times the key has been used; the fewer times used, the higher the weight.
- * Weight calculation considers the requested model ID; different models have independent usage counts.
+ * Selects the next available Gemini API key using a simple round-robin approach,
+ * excluding the key used in the immediately preceding request (if more than one key is available).
+ * Also excludes keys marked with 401/403 errors.
  * Quota checking is not performed here; it is done in handleV1ChatCompletions.
  */
 async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, requestedModelId?: string): Promise<{ id: string; key: string } | null> {
 	try {
+		// 1. Get the full list of configured key IDs
 		const keyListJson = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_LIST);
-		const keyList: string[] = keyListJson ? JSON.parse(keyListJson) : [];
+		const allKeyIds: string[] = keyListJson ? JSON.parse(keyListJson) : [];
 
-		if (keyList.length === 0) {
+		if (allKeyIds.length === 0) {
 			console.error("No Gemini keys configured in KV under", KV_KEY_GEMINI_KEY_LIST);
 			return null;
 		}
 
-		// Get today's date (Los Angeles timezone)
-		const todayInLA = getTodayInLA();
-		
-		// Get information for each key and calculate weight
-		const keysWithWeights: Array<{
-			id: string;
-			key: string;
-			weight: number;
-			usage: number;
-			modelUsage: number;
-		}> = [];
+		// 2. Get the ID of the key used last time
+		const lastUsedKeyId = await env.GEMINI_KEYS_KV.get(KV_KEY_LAST_USED_GEMINI_KEY_ID);
 
-		for (const keyId of keyList) {
+		// 3. Filter out keys with error status (401/403)
+		const validKeyIdsPromises = allKeyIds.map(async (keyId) => {
 			const keyKvName = `key:${keyId}`;
 			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
-			
-			if (!keyInfoJson) {
-				console.warn(`Key info not found for ID: ${keyId} listed in ${KV_KEY_GEMINI_KEY_LIST}. Skipping.`);
-				continue;
-			}
-
+			if (!keyInfoJson) return null; // Skip if key info doesn't exist
 			try {
-				// Parse the JSON string from KV
 				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
-
-				// --- New: Skip keys with 401/403 errors ---
 				if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
-					console.log(`Skipping key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
-					continue; // Skip this key
+					console.log(`Excluding key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
+					return null; // Exclude errored keys
 				}
-				// --- End New ---
-				
-				// If the key's usage date is not today, its usage should be considered 0
-				const isCurrentDay = keyInfoData.usageDate === todayInLA;
-				const totalUsage = isCurrentDay ? (keyInfoData.usage || 0) : 0;
-				
-				// Get the usage count for the specific model
-				let modelSpecificUsage = 0;
-				if (requestedModelId && isCurrentDay && keyInfoData.modelUsage) {
-					modelSpecificUsage = keyInfoData.modelUsage[requestedModelId] || 0;
-				}
-				
-				// Calculate weight - weight is inversely proportional to usage
-				// Use a small value 1 to prevent division by zero and use an exponential function to make the difference more pronounced
-				const baseWeight = Math.exp(-modelSpecificUsage / 10) * 100;
-				
-				keysWithWeights.push({
-					id: keyId,
-					key: keyInfoData.key || '',
-					weight: baseWeight,
-					usage: totalUsage,
-					modelUsage: modelSpecificUsage
-				});
+				return keyId; // Keep valid key ID
 			} catch (parseError) {
-				console.error(`Failed to parse key info for ID: ${keyId}. Skipping. Error:`, parseError);
-				continue;
+				console.error(`Failed to parse key info for ID: ${keyId} during filtering. Skipping. Error:`, parseError);
+				return null;
 			}
-		}
+		});
 
-		// Check if there are any available keys
-		if (keysWithWeights.length === 0) {
-			console.error("No usable Gemini keys found.");
+		const validKeyIds = (await Promise.all(validKeyIdsPromises)).filter((id): id is string => id !== null);
+
+		if (validKeyIds.length === 0) {
+			console.error("No valid (non-errored) Gemini keys available.");
 			return null;
 		}
 
-		// Sort by weight (high to low) and log
-		keysWithWeights.sort((a, b) => b.weight - a.weight);
-		
-		// Log the sorting results (for debugging)
-		console.log("Keys sorted by weight (higher weight = higher priority):");
-		keysWithWeights.forEach(k => {
-			console.log(`Key: ${k.id}, Model usage: ${k.modelUsage}, Total usage: ${k.usage}, Weight: ${k.weight.toFixed(2)}`);
-		});
-
-		// Use weighted random selection
-		// 1. Calculate the sum of weights
-		const totalWeight = keysWithWeights.reduce((sum, key) => sum + key.weight, 0);
-		
-		// 2. Generate a random number between 0 and totalWeight
-		const randomValue = Math.random() * totalWeight;
-		
-		// 3. Select the key based on weight
-		let cumulativeWeight = 0;
-		for (const keyInfo of keysWithWeights) {
-			cumulativeWeight += keyInfo.weight;
-			if (randomValue <= cumulativeWeight) {
-				console.log(`Selected Gemini Key ID via weighted algorithm: ${keyInfo.id} (weight: ${keyInfo.weight.toFixed(2)}, model usage: ${keyInfo.modelUsage})`);
-				return {
-					id: keyInfo.id,
-					key: keyInfo.key
-				};
+		// 4. Determine the pool of eligible keys for this request
+		let eligibleKeyIds = validKeyIds;
+		if (validKeyIds.length > 1 && lastUsedKeyId) {
+			const withoutLastUsed = validKeyIds.filter(id => id !== lastUsedKeyId);
+			// If filtering out the last used key leaves the list empty,
+			// it means the last used key was the *only* valid one remaining.
+			// In this case, we must use it again.
+			if (withoutLastUsed.length > 0) {
+				eligibleKeyIds = withoutLastUsed;
+				console.log(`Excluding last used key (${lastUsedKeyId}) from selection pool.`);
+			} else {
+				console.log(`Last used key (${lastUsedKeyId}) is the only valid key available. Re-using it.`);
+				// Keep eligibleKeyIds as validKeyIds
 			}
 		}
-		
-		// If no key is selected due to floating-point errors, return the key with the highest weight
-		console.log(`Fallback: Selected highest weighted key: ${keysWithWeights[0].id}`);
+
+		// 5. Randomly select a key from the eligible pool
+		const randomIndex = Math.floor(Math.random() * eligibleKeyIds.length);
+		const selectedKeyId = eligibleKeyIds[randomIndex];
+
+		// 6. Retrieve the actual key value for the selected ID
+		const selectedKeyKvName = `key:${selectedKeyId}`;
+		const selectedKeyInfoJson = await env.GEMINI_KEYS_KV.get(selectedKeyKvName);
+		if (!selectedKeyInfoJson) {
+			console.error(`Selected key ID ${selectedKeyId} info disappeared from KV. This should not happen.`);
+			// Fallback: try selecting another random one? Or just return null?
+			// Let's try returning null for now to indicate a failure state.
+			return null;
+		}
+		const selectedKeyInfoData = JSON.parse(selectedKeyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+		const selectedKeyValue = selectedKeyInfoData.key;
+
+		if (!selectedKeyValue) {
+			console.error(`Selected key ID ${selectedKeyId} has no 'key' value stored in KV.`);
+			return null;
+		}
+
+		// 7. Store the selected key ID for the *next* request to potentially exclude
+		// Run this in the background
+		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
+		console.log(`Selected Gemini Key ID via simple random choice (excluding last used if possible): ${selectedKeyId}`);
+
 		return {
-			id: keysWithWeights[0].id,
-			key: keysWithWeights[0].key
+			id: selectedKeyId,
+			key: selectedKeyValue
 		};
 
 	} catch (error) {
