@@ -1878,10 +1878,10 @@ function handleLogoutRequest(): Response {
 // --- Gemini Key Management ---
 
 /**
- * Selects the next available Gemini API key using a sequential rotation approach.
- * Remembers the last used key index and selects the next available key in sequence.
- * Skips keys with error status (401/403) or those that have reached quota limits.
- * Quota checking is not performed here; it is done in handleV1ChatCompletions.
+ * Selects the next available Gemini API key using a sequential round-robin approach,
+ * ensuring fair distribution of requests across all available keys.
+ * Automatically skips keys with 401/403 errors or quota limitations.
+ * Quota checking for the selected key is done in handleV1ChatCompletions.
  */
 async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, requestedModelId?: string): Promise<{ id: string; key: string } | null> {
 	try {
@@ -1894,92 +1894,143 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			return null;
 		}
 
-		// 2. Get the current key index (or initialize to -1 if not exists)
+		// 2. Get the current index (for round-robin selection)
 		const currentIndexStr = await env.GEMINI_KEYS_KV.get(KV_KEY_GEMINI_KEY_INDEX);
-		let currentIndex = currentIndexStr ? parseInt(currentIndexStr, 10) : -1;
-		
-		// Ensure currentIndex is valid, default to -1 if parsing fails
-		if (isNaN(currentIndex) || currentIndex < -1 || currentIndex >= allKeyIds.length) {
-			currentIndex = -1;
+		let currentIndex = 0;
+		if (currentIndexStr) {
+			try {
+				currentIndex = parseInt(currentIndexStr, 10);
+				// Ensure the index is valid (in case the key list changed)
+				if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= allKeyIds.length) {
+					currentIndex = 0;
+				}
+			} catch (e) {
+				console.error("Error parsing current index, resetting to 0:", e);
+				currentIndex = 0;
+			}
 		}
+
+		// 3. Get models and quotas config for checking quota limits
+		const [modelsConfigJson, categoryQuotasJson] = await Promise.all([
+			env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json"),
+			env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json")
+		]);
+		const modelsConfig: Record<string, ModelConfig> = (modelsConfigJson as Record<string, ModelConfig>) || {};
+		const categoryQuotas: CategoryQuotas = (categoryQuotasJson as CategoryQuotas) || { proQuota: Infinity, flashQuota: Infinity };
 		
-		// 3. Filter to find valid keys with status and model/category usage
-		// We create a comprehensive map of key IDs to their validity status and info
-		const keyInfoMap = new Map<string, { valid: boolean; keyValue: string | null; }>();
-		
-		// Get all key information concurrently
-		const keyInfoPromises = allKeyIds.map(async (keyId) => {
+		// Get model category if model ID is provided
+		let modelCategory: 'Pro' | 'Flash' | 'Custom' | undefined = undefined;
+		if (requestedModelId) {
+			modelCategory = modelsConfig[requestedModelId]?.category;
+		}
+
+		// 4. Try to find a valid key using round-robin
+		const todayInLA = getTodayInLA(); // For quota checks
+		let selectedKeyId: string | null = null;
+		let selectedKeyValue: string | null = null;
+		let keysChecked = 0;
+
+		// Loop through keys starting from current index, wrapping around if needed
+		while (keysChecked < allKeyIds.length) {
+			// Get the key ID at the current position
+			const keyId = allKeyIds[currentIndex];
 			const keyKvName = `key:${keyId}`;
 			const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
-			
-			if (!keyInfoJson) {
-				keyInfoMap.set(keyId, { valid: false, keyValue: null });
-				return;
-			}
-			
+
+			// Move to the next index for the next iteration (with wrapping)
+			currentIndex = (currentIndex + 1) % allKeyIds.length;
+			keysChecked++;
+
+			// Skip if key info doesn't exist
+			if (!keyInfoJson) continue;
+
 			try {
 				const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 				
-				// Check for 401/403 errors
+				// Check for error status (401/403)
 				if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
-					console.log(`Excluding key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
-					keyInfoMap.set(keyId, { valid: false, keyValue: null });
-					return;
+					console.log(`Skipping key ${keyId} due to error status: ${keyInfoData.errorStatus}`);
+					continue;
 				}
-				
-				// Store valid key data
-				keyInfoMap.set(keyId, { 
-					valid: true, 
-					keyValue: keyInfoData.key || null 
-				});
+
+				// Check for quota limitations if we have a model category
+				if (modelCategory && keyInfoData.usageDate === todayInLA) {
+					let quotaExceeded = false;
+
+					// Check category quotas
+					if (modelCategory === 'Pro') {
+						const proLimit = categoryQuotas.proQuota ?? Infinity;
+						const proUsage = keyInfoData.categoryUsage?.pro ?? 0;
+						if (proUsage >= proLimit) {
+							console.log(`Skipping key ${keyId}: Pro category quota reached (${proUsage}/${proLimit})`);
+							quotaExceeded = true;
+						}
+						// Also check individual model quota if set
+						else if (requestedModelId && modelsConfig[requestedModelId]?.individualQuota) {
+							const modelLimit = modelsConfig[requestedModelId].individualQuota!;
+							const modelUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
+							if (modelUsage >= modelLimit) {
+								console.log(`Skipping key ${keyId}: Pro model '${requestedModelId}' individual quota reached (${modelUsage}/${modelLimit})`);
+								quotaExceeded = true;
+							}
+						}
+					} 
+					else if (modelCategory === 'Flash') {
+						const flashLimit = categoryQuotas.flashQuota ?? Infinity;
+						const flashUsage = keyInfoData.categoryUsage?.flash ?? 0;
+						if (flashUsage >= flashLimit) {
+							console.log(`Skipping key ${keyId}: Flash category quota reached (${flashUsage}/${flashLimit})`);
+							quotaExceeded = true;
+						}
+						// Also check individual model quota if set
+						else if (requestedModelId && modelsConfig[requestedModelId]?.individualQuota) {
+							const modelLimit = modelsConfig[requestedModelId].individualQuota!;
+							const modelUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
+							if (modelUsage >= modelLimit) {
+								console.log(`Skipping key ${keyId}: Flash model '${requestedModelId}' individual quota reached (${modelUsage}/${modelLimit})`);
+								quotaExceeded = true;
+							}
+						}
+					} 
+					else if (modelCategory === 'Custom' && requestedModelId) {
+						const customLimit = modelsConfig[requestedModelId]?.dailyQuota ?? Infinity;
+						const customUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
+						if (customUsage >= customLimit) {
+							console.log(`Skipping key ${keyId}: Custom model '${requestedModelId}' quota reached (${customUsage}/${customLimit})`);
+							quotaExceeded = true;
+						}
+					}
+
+					if (quotaExceeded) continue;
+				}
+
+				// If we get here, the key is valid for use
+				selectedKeyId = keyId;
+				selectedKeyValue = keyInfoData.key || null;
+				break;
 			} catch (parseError) {
 				console.error(`Failed to parse key info for ID: ${keyId}. Skipping. Error:`, parseError);
-				keyInfoMap.set(keyId, { valid: false, keyValue: null });
+				continue;
 			}
-		});
-		
-		// Wait for all key info to be processed
-		await Promise.all(keyInfoPromises);
-		
-		// 4. Find the next valid key in rotation order, starting after the current index
-		let selectedKeyId: string | null = null;
-		let loopCount = 0;
-		const maxLoops = allKeyIds.length; // Prevent infinite loops
-		
-		while (!selectedKeyId && loopCount < maxLoops) {
-			// Move to the next index, wrapping around if necessary
-			currentIndex = (currentIndex + 1) % allKeyIds.length;
-			
-			const candidateKeyId = allKeyIds[currentIndex];
-			const keyInfo = keyInfoMap.get(candidateKeyId);
-			
-			// Selected a key if it's valid and has a key value
-			if (keyInfo && keyInfo.valid && keyInfo.keyValue) {
-				selectedKeyId = candidateKeyId;
-			}
-			
-			loopCount++;
 		}
 
-		// No valid key found after checking all keys
-		if (!selectedKeyId) {
-			console.error("No valid Gemini keys available after checking all keys.");
+		// If we couldn't find a valid key after checking all keys
+		if (!selectedKeyId || !selectedKeyValue) {
+			console.error("No available Gemini keys found after checking all keys.");
 			return null;
 		}
 
-		// Get the key value for the selected ID
-		const keyInfo = keyInfoMap.get(selectedKeyId)!;
-		
-		// 5. Store the current index for the next request
+		// Save the next index for future requests
 		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_INDEX, currentIndex.toString()));
-		console.log(`Selected Gemini Key ID via sequential rotation: ${selectedKeyId} (index: ${currentIndex})`);
-
-		// Also store the last used key ID for backward compatibility
+		
+		// Save the selected key ID for potential exclusion in case of error handling
 		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
+		
+		console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyId} (next index: ${currentIndex})`);
 
 		return {
 			id: selectedKeyId,
-			key: keyInfo.keyValue!
+			key: selectedKeyValue
 		};
 
 	} catch (error) {
