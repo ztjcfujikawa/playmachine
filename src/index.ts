@@ -1938,9 +1938,30 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			}
 		}
 
-		// 5. Randomly select a key from the eligible pool
-		const randomIndex = Math.floor(Math.random() * eligibleKeyIds.length);
-		const selectedKeyId = eligibleKeyIds[randomIndex];
+		// 5. Select the next key sequentially (round-robin) from the eligible pool
+		let selectedKeyId: string | null = null;
+
+		if (eligibleKeyIds.length === 1) {
+			// If only one eligible key, use it
+			selectedKeyId = eligibleKeyIds[0];
+			console.log(`Only one eligible key available (${selectedKeyId}). Selecting it.`);
+		} else {
+			// Find the index of the last used key within the *eligible* list
+			const lastUsedIndexInEligible = lastUsedKeyId ? eligibleKeyIds.indexOf(lastUsedKeyId) : -1;
+
+			// Calculate the next index, wrapping around
+			const nextIndex = (lastUsedIndexInEligible + 1) % eligibleKeyIds.length;
+			selectedKeyId = eligibleKeyIds[nextIndex];
+			console.log(`Selecting next key sequentially. Last used (in eligible): ${lastUsedKeyId} (index ${lastUsedIndexInEligible}). Next index: ${nextIndex}. Selected ID: ${selectedKeyId}`);
+		}
+
+
+		if (!selectedKeyId) {
+			// This should theoretically not happen if eligibleKeyIds is not empty, but as a safeguard:
+			console.error("Failed to select a key ID sequentially, falling back to the first eligible key.");
+			selectedKeyId = eligibleKeyIds[0]; // Fallback
+		}
+
 
 		// 6. Retrieve the actual key value for the selected ID
 		const selectedKeyKvName = `key:${selectedKeyId}`;
@@ -1951,6 +1972,30 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 			// Let's try returning null for now to indicate a failure state.
 			return null;
 		}
+		const selectedKeyInfoJson = await env.GEMINI_KEYS_KV.get(selectedKeyKvName);
+		if (!selectedKeyInfoJson) {
+			console.error(`Selected key ID ${selectedKeyId} info disappeared from KV. This should not happen.`);
+			// Fallback: Try the first available valid key?
+			const fallbackKeyId = validKeyIds[0]; // Use the first *valid* key as fallback
+			const fallbackKvName = `key:${fallbackKeyId}`;
+			const fallbackKeyInfoJson = await env.GEMINI_KEYS_KV.get(fallbackKvName);
+			if(!fallbackKeyInfoJson) {
+				console.error("Fallback key info also missing. No keys available.");
+				return null;
+			}
+			const fallbackKeyInfoData = JSON.parse(fallbackKeyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+			const fallbackKeyValue = fallbackKeyInfoData.key;
+			if (!fallbackKeyValue) {
+				console.error(`Fallback key ID ${fallbackKeyId} also has no key value stored.`);
+				return null;
+			}
+			console.warn(`Using fallback key: ${fallbackKeyId}`);
+			selectedKeyId = fallbackKeyId; // Update selectedKeyId to the fallback
+			// Store the fallback key ID for the *next* request
+			ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
+			return { id: selectedKeyId, key: fallbackKeyValue };
+		}
+
 		const selectedKeyInfoData = JSON.parse(selectedKeyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 		const selectedKeyValue = selectedKeyInfoData.key;
 
@@ -1962,7 +2007,7 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 		// 7. Store the selected key ID for the *next* request to potentially exclude
 		// Run this in the background
 		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
-		console.log(`Selected Gemini Key ID via simple random choice (excluding last used if possible): ${selectedKeyId}`);
+		console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyId}`);
 
 		return {
 			id: selectedKeyId,
