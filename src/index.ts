@@ -48,6 +48,7 @@ interface GeminiKeyInfo {
 	categoryUsage?: { pro: number; flash: number };
 	name?: string;
 	errorStatus?: 401 | 403 | null; // Added to track 401/403 errors
+	consecutive429Counts?: Record<string, number>; // Tracks consecutive 429 errors per model/category
 }
 
 /**
@@ -749,37 +750,33 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 		});
 
 		// Increment usage count (only if successful or specific errors like 429?)
-		if (geminiResponse.ok) {
-			// Pass model category to increment usage correctly
-			ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory));
-		} else {
-			// Log error from Gemini
-			const errorBody = await geminiResponse.text();
-			console.error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBody);
+		// --- Handle Gemini Response ---
+		// Need to read the body for error details later if needed
+		let geminiResponseClone = geminiResponse.clone(); // Clone for potential error reading
 
-			// --- New: Handle 429 Too Many Requests ---
+		if (geminiResponse.ok) {
+			// Successful request: Increment usage AND reset 429 counters
+			ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory, true)); // Pass true to reset counters
+		} else {
+			// Error handling
+			const errorBodyText = await geminiResponseClone.text(); // Read error from clone
+			console.error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBodyText);
+
+			// Handle specific error statuses
 			if (geminiResponse.status === 429) {
-				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Forcing quota to limit for today.`);
-				// Force set the quota to its limit for this category/model on this key for today
-				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
-			}
-			// --- New: Handle 401/403 for error tracking ---
-			if (geminiResponse.status === 401 || geminiResponse.status === 403) {
+				// Increment 429 counter and potentially force quota limit
+				ctx.waitUntil(handle429Error(selectedKey.id, env, modelCategory, requestedModelId));
+			} else if (geminiResponse.status === 401 || geminiResponse.status === 403) {
+				// Record persistent key errors
 				console.warn(`Received ${geminiResponse.status} from Gemini for key ${selectedKey.id}. Recording error status.`);
 				ctx.waitUntil(recordKeyError(selectedKey.id, env, geminiResponse.status as 401 | 403));
 			}
-			// --- End New 401/403 Handling ---
+			// No specific action needed for other errors in terms of key state management
 
-			// --- Existing 429 Handling ---
-			if (geminiResponse.status === 429) {
-				console.warn(`Received 429 from Gemini for key ${selectedKey.id}, category ${modelCategory}${modelCategory === 'Custom' ? ` (model ${requestedModelId})` : ''}. Forcing quota to limit for today.`);
-				ctx.waitUntil(forceSetQuotaToLimit(selectedKey.id, env, modelCategory, requestedModelId));
-			}
-			// --- End Existing 429 Handling ---
-
+			// Return error response to the client
 			return new Response(JSON.stringify({
 				error: {
-					message: `Gemini API Error: ${geminiResponse.statusText} - ${errorBody}`,
+					message: `Gemini API Error: ${geminiResponse.statusText} - ${errorBodyText}`,
 					type: "gemini_api_error",
 					param: null,
 					code: geminiResponse.status
@@ -1239,7 +1236,8 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 							modelUsage: modelUsageData, 
 							categoryUsage: categoryUsageData,
 							categoryQuotas: categoryQuotas,
-							errorStatus: keyInfoData.errorStatus // Include error status
+							errorStatus: keyInfoData.errorStatus, // Include error status
+							consecutive429Counts: keyInfoData.consecutive429Counts || {} // Include 429 counts
 						};
 					} catch (e) {
 						console.error(`Error processing key ${keyMeta.name}:`, e);
@@ -1287,7 +1285,8 @@ async function handleAdminGeminiKeys(request: Request, env: Env, ctx: ExecutionC
 					name: keyName,
 					modelUsage: {},
 					categoryUsage: { pro: 0, flash: 0 },
-					errorStatus: null // Initialize error status
+					errorStatus: null, // Initialize error status
+					consecutive429Counts: {} // Initialize 429 counts
 				};
 
 				await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(newKeyInfo));
@@ -1980,8 +1979,9 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
  * Increments the usage count for a given Gemini Key ID in KV.
  * Resets the count if the date has changed.
  * Tracks usage per model and per category (Pro/Flash/Custom).
+ * Optionally resets consecutive 429 counters if reset429Counters is true.
  */
-async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, category?: 'Pro' | 'Flash' | 'Custom'): Promise<void> {
+async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, category?: 'Pro' | 'Flash' | 'Custom', reset429Counters: boolean = false): Promise<void> {
 	const keyKvName = `key:${keyId}`;
 	try {
 		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
@@ -2001,44 +2001,39 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 		let usageDate = keyInfoData.usageDate || '';
 		let modelUsage = keyInfoData.modelUsage || {};
 		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
+		let consecutive429Counts = keyInfoData.consecutive429Counts || {}; // Initialize if missing
 
-		// Reset all usage counters for new day based on Los Angeles time
+		// Reset counters if it's a new day OR if explicitly requested (successful request)
 		if (usageDate !== todayInLA) {
-			console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage counters.`);
-			currentTotalUsage = 1; // Start with 1 for this request
+			console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage and 429 counters.`);
+			currentTotalUsage = 0; // Reset total usage
 			usageDate = todayInLA;
-			modelUsage = {};
-			categoryUsage = { pro: 0, flash: 0 };
-
-			// Always record the current request in both model and category tracking
-			if (modelId) {
-				modelUsage[modelId] = 1;
+			modelUsage = {}; // Reset model usage
+			categoryUsage = { pro: 0, flash: 0 }; // Reset category usage
+			consecutive429Counts = {}; // Reset 429 counts
+		} else if (reset429Counters) {
+			// If it's the same day but a successful request, reset only the 429 counts
+			if (Object.keys(consecutive429Counts).length > 0) {
+				console.log(`Successful request or explicit reset for key ${keyId}. Resetting 429 counters.`);
+				consecutive429Counts = {};
 			}
-			
-			// Update the appropriate category counter
-			if (category === 'Pro') {
-				categoryUsage.pro = 1;
-			} else if (category === 'Flash') {
-				categoryUsage.flash = 1;
-			}
-			// Custom category models are tracked in modelUsage
-		} else {
-			// Same day, just increment counters
-			currentTotalUsage += 1;
-
-			// Update model-specific usage if model ID is provided
-			if (modelId) {
-				modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
-			}
-			
-			// Update category-specific usage based on category
-			if (category === 'Pro') {
-				categoryUsage.pro = (categoryUsage.pro || 0) + 1;
-			} else if (category === 'Flash') {
-				categoryUsage.flash = (categoryUsage.flash || 0) + 1;
-			}
-			// Custom category models are tracked in modelUsage
 		}
+
+		// Now, increment the usage for the current request
+		currentTotalUsage += 1;
+
+		// Update model-specific usage
+		if (modelId) {
+			modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
+		}
+
+		// Update category-specific usage based on category
+		if (category === 'Pro') {
+			categoryUsage.pro = (categoryUsage.pro || 0) + 1;
+		} else if (category === 'Flash') {
+			categoryUsage.flash = (categoryUsage.flash || 0) + 1;
+		}
+		// Custom category models are tracked in modelUsage
 
 		// Create the updated object to store, preserving existing fields
 		const updatedKeyInfo: Partial<Omit<GeminiKeyInfo, 'id'>> = {
@@ -2047,11 +2042,11 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 			usageDate: usageDate,
 			modelUsage: modelUsage,
 			categoryUsage: categoryUsage,
+			consecutive429Counts: consecutive429Counts, // Save the (potentially reset) 429 counts
 		};
-
 		// Put the updated info back into KV
 		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
-		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}`);
+		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts: ${JSON.stringify(consecutive429Counts)}`);
 
 	} catch (e) {
 		console.error(`Failed to increment usage for key ${keyId}:`, e);
@@ -2062,9 +2057,10 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 
 /**
  * Forces the usage count for a specific category/model on a key to its configured daily limit for the current day.
- * This is typically called when a 429 error is received from the upstream API.
+ * This is typically called when a 429 error threshold (e.g., 3 consecutive) is reached.
+ * It also resets the specific 429 counter for the model/category that triggered the limit.
  */
-async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string): Promise<void> {
+async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string, counterKey?: string): Promise<void> {
 	const keyKvName = `key:${keyId}`;
 	try {
 		// Fetch current key info
@@ -2090,14 +2086,21 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 		let usageDate = keyInfoData.usageDate || '';
 		let modelUsage = keyInfoData.modelUsage || {};
 		let categoryUsage = keyInfoData.categoryUsage || { pro: 0, flash: 0 };
+		let consecutive429Counts = keyInfoData.consecutive429Counts || {}; // Initialize if missing
 
-		// If the usageDate is not today, reset everything first
+		// If the usageDate is not today, reset everything first, including 429 counts
 		if (usageDate !== todayInLA) {
-			console.log(`Date change detected in forceSetQuotaToLimit for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage counters.`);
+			console.log(`Date change detected in forceSetQuotaToLimit for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage and 429 counters before forcing limit.`);
 			usageDate = todayInLA;
-			modelUsage = {};
-			categoryUsage = { pro: 0, flash: 0 };
-			// Don't reset total usage here, as it wasn't necessarily 0 before
+			modelUsage = {}; // Reset model usage
+			categoryUsage = { pro: 0, flash: 0 }; // Reset category usage
+			consecutive429Counts = {}; // Reset 429 counts
+		}
+
+		// Reset the specific 429 counter that triggered this action
+		if (counterKey && consecutive429Counts.hasOwnProperty(counterKey)) {
+			console.log(`Resetting 429 counter for key ${keyId}, counter ${counterKey} after forcing quota.`);
+			delete consecutive429Counts[counterKey]; // Or set to 0, deletion is cleaner
 		}
 
 		// Set the specific category/model usage to its limit
@@ -2150,16 +2153,101 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 			usageDate: usageDate,
 			modelUsage: modelUsage,
 			categoryUsage: categoryUsage,
+			consecutive429Counts: consecutive429Counts, // Save updated 429 counts
 		};
 
 		// Save back to KV
 		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
-		console.log(`Key ${keyId} quota forced to limit for category ${category}${category === 'Custom' ? ` (model ${modelId})` : ''} for date ${todayInLA}.`);
+		console.log(`Key ${keyId} quota forced to limit for category ${category}${category === 'Custom' || (modelConfig?.individualQuota && modelId) ? ` (model/counter: ${modelId ?? counterKey})` : ''} for date ${todayInLA}.`);
 
 	} catch (e) {
 		console.error(`Failed to force quota limit for key ${keyId}:`, e);
 	}
-	// Removed extra closing brace here
+}
+
+/**
+ * Handles the logic when a 429 error is received from the Gemini API.
+ * Increments the consecutive 429 counter for the specific model/category.
+ * If the counter reaches 3, triggers forceSetQuotaToLimit.
+ */
+async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string): Promise<void> {
+	const keyKvName = `key:${keyId}`;
+	const CONSECUTIVE_429_LIMIT = 3;
+
+	try {
+		// Fetch current key info
+		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+		if (!keyInfoJson) {
+			console.warn(`Cannot handle 429: Key info not found for ID: ${keyId}`);
+			return;
+		}
+		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+		let consecutive429Counts = keyInfoData.consecutive429Counts || {};
+
+		// Determine the specific counter key (model ID or category string)
+		let counterKey: string | undefined = undefined;
+		let needsQuotaCheck = false; // Does this model/category have a quota defined?
+
+		// Fetch model/category config to decide the counter key and check if quota exists
+		const [modelsConfigJson, categoryQuotasJson] = await Promise.all([
+			env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json"),
+			env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json")
+		]);
+		const modelsConfig: Record<string, ModelConfig> = (modelsConfigJson as Record<string, ModelConfig>) || {};
+		const categoryQuotas: CategoryQuotas = (categoryQuotasJson as CategoryQuotas) || { proQuota: Infinity, flashQuota: Infinity };
+		const modelConfig = modelId ? modelsConfig[modelId] : undefined;
+
+		if (category === 'Custom' && modelId) {
+			counterKey = modelId;
+			needsQuotaCheck = !!modelConfig?.dailyQuota;
+		} else if ((category === 'Pro' || category === 'Flash') && modelId && modelConfig?.individualQuota) {
+			// Pro/Flash model *with* individual quota -> use model ID as key
+			counterKey = modelId;
+			needsQuotaCheck = true; // Individual quota exists
+		} else if (category === 'Pro') {
+			// Pro model *without* individual quota -> use category key
+			counterKey = 'category:pro';
+			needsQuotaCheck = !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
+		} else if (category === 'Flash') {
+			// Flash model *without* individual quota -> use category key
+			counterKey = 'category:flash';
+			needsQuotaCheck = !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
+		}
+
+		if (!counterKey) {
+			console.warn(`Could not determine counter key for key ${keyId}, category ${category}, model ${modelId}. Skipping 429 handling.`);
+			return;
+		}
+		if (!needsQuotaCheck) {
+			console.log(`Skipping 429 counter for key ${keyId}, counter ${counterKey} as no relevant quota is configured.`);
+			return; // Don't count 429s if there's no quota to hit anyway
+		}
+
+
+		// Increment the counter
+		const currentCount = (consecutive429Counts[counterKey] || 0) + 1;
+		consecutive429Counts[counterKey] = currentCount;
+
+		console.warn(`Received 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
+
+		// Check if the limit is reached
+		if (currentCount >= CONSECUTIVE_429_LIMIT) {
+			console.warn(`Consecutive 429 limit (${CONSECUTIVE_429_LIMIT}) reached for key ${keyId}, counter ${counterKey}. Forcing quota limit.`);
+			// Call forceSetQuotaToLimit, passing the counterKey to reset it
+			await forceSetQuotaToLimit(keyId, env, category, modelId, counterKey);
+			// Note: forceSetQuotaToLimit now handles resetting the specific counter
+		} else {
+			// Limit not reached, just save the updated counts
+			const updatedKeyInfo: Partial<Omit<GeminiKeyInfo, 'id'>> = {
+				...keyInfoData,
+				consecutive429Counts: consecutive429Counts,
+			};
+			await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
+		}
+
+	} catch (e) {
+		console.error(`Failed to handle 429 error for key ${keyId}:`, e);
+	}
 }
 
 
