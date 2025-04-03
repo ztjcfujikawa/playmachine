@@ -4,7 +4,11 @@
   "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "vercel-build": "echo 'Building for Vercel'"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "keywords": [],
   "author": "",
