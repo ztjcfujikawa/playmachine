@@ -7,7 +7,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 
 // Import the database connection (this will also trigger initialization)
-const db = require('./db'); 
+const db = require('./db'); // 修改为相对于 src 目录的路径
 
 // Import route handlers
 const authRoutes = require('./routes/auth');
@@ -33,17 +33,6 @@ app.use(cors({
 
 // Handle OPTIONS preflight requests globally (alternative to handling in each route)
 app.options('*', cors());
-
-// Disable caching for all API routes
-app.use((req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/v1')) {
-        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.set('Pragma', 'no-cache');
-        res.set('Expires', '0');
-        res.set('Surrogate-Control', 'no-store');
-    }
-    next();
-});
 
 // Parse JSON request bodies
 app.use(express.json({ limit: '100mb' }));

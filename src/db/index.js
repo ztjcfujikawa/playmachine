@@ -2,46 +2,28 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
-// Check if we're running on Vercel
-const isVercelProd = process.env.VERCEL === '1';
-let db;
-
-if (isVercelProd) {
-  console.log('Running on Vercel - using in-memory SQLite database');
-  // Use in-memory database for Vercel
-  db = new sqlite3.Database(':memory:', (err) => {
-    if (err) {
-      console.error('Error opening in-memory database:', err.message);
-      throw err;
-    } else {
-      console.log('Connected to the SQLite in-memory database');
-      initializeDatabase();
-    }
-  });
-} else {
-  // Construct the database path relative to the project root for local development
-  // Ensure data directory exists
-  const dataDir = path.resolve(__dirname, '..', '..', 'data');
-  if (!fs.existsSync(dataDir)) {
-    console.log(`Creating data directory: ${dataDir}`);
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  const dbPath = path.resolve(dataDir, 'database.db');
-  console.log(`Database path: ${dbPath}`); // Log the path for debugging
-
-  // Initialize the database connection
-  // The OPEN_READWRITE | OPEN_CREATE flag ensures the file is created if it doesn't exist.
-  db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-    if (err) {
-      console.error('Error opening database:', err.message);
-      throw err; // Throw error to stop the application if DB connection fails
-    } else {
-      console.log('Connected to the SQLite database.');
-      initializeDatabase();
-    }
-  });
+// Construct the database path relative to the project root
+// Ensure data directory exists
+const dataDir = path.resolve(__dirname, '..', '..', 'data');
+if (!fs.existsSync(dataDir)) {
+  console.log(`Creating data directory: ${dataDir}`);
+  fs.mkdirSync(dataDir, { recursive: true });
 }
+
+const dbPath = path.resolve(dataDir, 'database.db');
+console.log(`Database path: ${dbPath}`); // Log the path for debugging
+
+// Initialize the database connection
+// The OPEN_READWRITE | OPEN_CREATE flag ensures the file is created if it doesn't exist.
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+  if (err) {
+    console.error('Error opening database:', err.message);
+    throw err; // Throw error to stop the application if DB connection fails
+  } else {
+    console.log('Connected to the SQLite database.');
+    initializeDatabase();
+  }
+});
 
 // SQL statements to create tables (if they don't exist)
 const createTablesSQL = `

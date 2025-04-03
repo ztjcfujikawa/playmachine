@@ -101,16 +101,10 @@ function hideError(container = errorMessageDiv) {
         // No need for Authorization header, rely on HttpOnly cookie
         const defaultHeaders = {
             'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0'
         };
 
         try {
-            const timestamp = new Date().getTime();
-            const url = `/api/admin${endpoint}${endpoint.includes('?') ? '&' : '?'}_=${timestamp}`;
-            
-            const response = await fetch(url, {
+            const response = await fetch(`/api/admin${endpoint}`, {
                 credentials: 'include', 
                 ...options,
                 headers: {
