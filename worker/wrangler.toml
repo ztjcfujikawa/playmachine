@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [assets]
 binding = "ASSETS"
-directory = "./public"
+directory = "../public"
 
 [observability]
 enabled = true
@@ -18,4 +18,3 @@ id = "123321"
 [[kv_namespaces]]
 binding = "WORKER_CONFIG_KV"
 id = "123321"
-
