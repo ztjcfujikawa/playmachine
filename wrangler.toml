@@ -1,12 +1,12 @@
 # wrangler.toml
 name = "gemini-proxy-panel"
-main = "src/index.ts"
+main = "worker/src/index.ts"
 compatibility_date = "2025-03-27"
 compatibility_flags = ["nodejs_compat"]
 
 [assets]
 binding = "ASSETS"
-directory = "../public"
+directory = "public"
 
 [observability]
 enabled = true
