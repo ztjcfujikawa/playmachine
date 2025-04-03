@@ -7,7 +7,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 
 // Import the database connection (this will also trigger initialization)
-const db = require('./db'); // 修改为相对于 src 目录的路径
+const db = require('./db'); 
 
 // Import route handlers
 const authRoutes = require('./routes/auth');
@@ -85,7 +85,7 @@ app.use((err, req, res, next) => {
 });
 
 // --- Start Server ---
-app.listen(port, () => {
-    console.log(`Gemini Proxy Panel (Node.js version) listening on port ${port}`);
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Gemini Proxy Panel (Node.js version) listening on port ${port} (all interfaces)`);
     console.log(`Admin UI should be available at http://localhost:${port}/`);
 });
