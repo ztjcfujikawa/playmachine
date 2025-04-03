@@ -1,8 +1,16 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
 // Construct the database path relative to the project root
-const dbPath = path.resolve(__dirname, '..', '..', 'database.db');
+// Ensure data directory exists
+const dataDir = path.resolve(__dirname, '..', '..', 'data');
+if (!fs.existsSync(dataDir)) {
+  console.log(`Creating data directory: ${dataDir}`);
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const dbPath = path.resolve(dataDir, 'database.db');
 console.log(`Database path: ${dbPath}`); // Log the path for debugging
 
 // Initialize the database connection
