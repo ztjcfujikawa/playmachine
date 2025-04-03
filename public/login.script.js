@@ -33,10 +33,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const password = passwordInput.value;
         
         try {
-            const response = await fetch('/api/login', {
+            const timestamp = new Date().getTime();
+            const response = await fetch(`/api/login?_=${timestamp}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 },
                 body: JSON.stringify({ password }),
             });
