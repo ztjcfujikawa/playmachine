@@ -556,108 +556,29 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	// Get and store Worker API Key for later use
 	workerApiKey = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
 
-	// --- Key Selection (Using weighted selection) ---
-	const selectedKey = await getNextAvailableGeminiKey(env, ctx, requestedModelId);
-	if (!selectedKey) {
-		return new Response(JSON.stringify({ error: "No available Gemini API Key configured." }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
-	}
+	const MAX_RETRIES = 3;
+	let lastErrorBody: any = { error: "Failed to process request after multiple retries." };
+	let lastErrorStatus = 500;
+	let modelInfo: ModelConfig | undefined;
+	let modelCategory: 'Pro' | 'Flash' | 'Custom' | undefined;
+	let safetyEnabled = true;
+	let modelsConfig: Record<string, ModelConfig> | null;
 
-	// --- Improved Quota Check Logic ---
-	const modelsConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Record<string, ModelConfig> | null;
-	const categoryQuotasConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json") as CategoryQuotas | null;
+	try {
+		// Fetch models config and safety settings once before the loop
+		[modelsConfig, safetySettingsJson] = await Promise.all([
+			env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Promise<Record<string, ModelConfig> | null>,
+			workerApiKey ? env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY) : Promise.resolve(null)
+		]);
 
-	const modelInfo = modelsConfig?.[requestedModelId];
-	if (!modelInfo) {
-		return new Response(JSON.stringify({ error: `Model '${requestedModelId}' is not configured.` }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
-	}
-	const modelCategory = modelInfo.category;
-
-	const keyKvName = `key:${selectedKey.id}`;
-	const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
-	let keyInfoData: Partial<Omit<GeminiKeyInfo, 'id'>> = {};
-	if (keyInfoJson) {
-		try {
-			keyInfoData = JSON.parse(keyInfoJson);
-		} catch (e) {
-			console.error(`Failed to parse key info for quota check (key: ${selectedKey.id}):`, e);
-			return new Response(JSON.stringify({ error: "Internal error checking API key usage" }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+		modelInfo = modelsConfig?.[requestedModelId];
+		if (!modelInfo) {
+			return new Response(JSON.stringify({ error: `Model '${requestedModelId}' is not configured.` }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 		}
-	}
+		modelCategory = modelInfo.category;
 
-	// Get today's date in Los Angeles timezone for consistent quota check
-	const todayInLA = getTodayInLA();
-	
-	let quotaExceeded = false;
-	let quotaLimit = Infinity;
-	let currentUsage = 0;
-
-	if (keyInfoData.usageDate !== todayInLA) {
-		// Usage resets today, so quota cannot be exceeded yet
-		quotaExceeded = false;
-	} else {
-		// Check quota based on category
-		switch (modelCategory) {
-			case 'Pro':
-				// First check category quota
-				quotaLimit = categoryQuotasConfig?.proQuota ?? Infinity;
-				currentUsage = keyInfoData.categoryUsage?.pro ?? 0;
-				if (currentUsage >= quotaLimit) {
-					quotaExceeded = true;
-					console.warn(`Key ${selectedKey.id} Pro category usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
-				} 
-				// If category quota is fine, also check individual quota if set
-				else if (modelInfo.individualQuota) {
-					const individualQuota = modelInfo.individualQuota;
-					const modelSpecificUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
-					if (modelSpecificUsage >= individualQuota) {
-						quotaExceeded = true;
-						console.warn(`Key ${selectedKey.id} Pro model '${requestedModelId}' individual quota usage (${modelSpecificUsage}) meets or exceeds individual quota (${individualQuota}).`);
-					}
-				}
-				break;
-			case 'Flash':
-				// First check category quota
-				quotaLimit = categoryQuotasConfig?.flashQuota ?? Infinity;
-				currentUsage = keyInfoData.categoryUsage?.flash ?? 0;
-				if (currentUsage >= quotaLimit) {
-					quotaExceeded = true;
-					console.warn(`Key ${selectedKey.id} Flash category usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
-				} 
-				// If category quota is fine, also check individual quota if set
-				else if (modelInfo.individualQuota) {
-					const individualQuota = modelInfo.individualQuota;
-					const modelSpecificUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
-					if (modelSpecificUsage >= individualQuota) {
-						quotaExceeded = true;
-						console.warn(`Key ${selectedKey.id} Flash model '${requestedModelId}' individual quota usage (${modelSpecificUsage}) meets or exceeds individual quota (${individualQuota}).`);
-					}
-				}
-				break;
-			case 'Custom':
-				// Custom models don't use individual quota
-				quotaLimit = modelInfo.dailyQuota ?? Infinity;
-				currentUsage = keyInfoData.modelUsage?.[requestedModelId] ?? 0;
-				if (currentUsage >= quotaLimit) {
-					quotaExceeded = true;
-					console.warn(`Key ${selectedKey.id} Custom model '${requestedModelId}' usage (${currentUsage}) meets or exceeds quota (${quotaLimit}).`);
-				}
-				break;
-		}
-	}
-
-	if (quotaExceeded) {
-		return new Response(JSON.stringify({ error: `API key quota exceeded for ${modelCategory} category${modelCategory === 'Custom' ? ` model ${requestedModelId}` : ''}. Please try again later or contact support.` }), { status: 429, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
-	}
-	// --- End New Quota Check ---
-
-
-	// --- Transform Request Body ---
-	// Determine safety settings based on worker key
-	let safetyEnabled = true; 
-	
-	if (workerApiKey) {
-		const safetySettingsJson = await env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY);
-		if (safetySettingsJson) {
+		// Determine safety settings based on worker key
+		if (workerApiKey && safetySettingsJson) {
 			try {
 				const safetySettings = JSON.parse(safetySettingsJson) as Record<string, { safetyEnabled: boolean }>;
 				if (safetySettings[workerApiKey]) {
@@ -665,214 +586,232 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				}
 			} catch (e) {
 				console.error("Error parsing safety settings:", e);
-				// Default to true if parsing fails
-				safetyEnabled = true; 
+				safetyEnabled = true; // Default to true if parsing fails
 			}
 		}
-	}
-	console.log(`Safety settings for this request: ${safetyEnabled}`); // Add log
+		console.log(`Safety settings for this request: ${safetyEnabled}`);
 
-	// Pass requestedModelId AND safetyEnabled to the transformation function
-	const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody, requestedModelId, safetyEnabled); // <-- Pass safetyEnabled here
-	if (contents.length === 0 && !systemInstruction) {
-		// Require at least one message even if tools are present
-		return new Response(JSON.stringify({ error: "No valid user, assistant, or converted system messages found." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
-	}
-
-	const geminiRequestBody: any = {
-		contents: contents,
-		
-		generationConfig: {
-			...(requestBody.temperature && { temperature: requestBody.temperature }),
-			...(requestBody.top_p && { topP: requestBody.top_p }),
-			...(requestBody.max_tokens && { maxOutputTokens: requestBody.max_tokens }),
-			...(requestBody.stop && { stopSequences: Array.isArray(requestBody.stop) ? requestBody.stop : [requestBody.stop] }),
+		// --- Transform Request Body (Needs to be done once before loop as it's static) ---
+		const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody, requestedModelId, safetyEnabled);
+		if (contents.length === 0 && !systemInstruction) {
+			return new Response(JSON.stringify({ error: "No valid user, assistant, or converted system messages found." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 		}
-	};
-	
-	if (!safetyEnabled) {
-		geminiRequestBody.safetySettings = [
-			{ category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' },
-			{ category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
-			{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' },
-			{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
-			{ category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' }
-		];
-	}
 
-	// Add systemInstruction if present
-	if (systemInstruction) {
-		geminiRequestBody.systemInstruction = systemInstruction;
-	}
-
-	// Add tools if present
-	if (geminiTools) {
-		geminiRequestBody.tools = geminiTools;
-	}
-
-
-	// --- Prepare and Send Request to Gemini ---
-	const apiAction = stream ? 'streamGenerateContent' : 'generateContent';
-	const querySeparator = stream ? '?alt=sse&' : '?';
-	const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
-
-	// Prepare headers for Gemini request, removing Cloudflare-specific headers
-	const geminiRequestHeaders = new Headers(); // Start with empty headers
-	geminiRequestHeaders.set('Content-Type', 'application/json'); // Set required content type
-
-	// Add common browser-like headers
-	geminiRequestHeaders.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'); 
-	geminiRequestHeaders.set('Accept', 'application/json, text/plain, */*');
-	geminiRequestHeaders.set('Accept-Language', 'en-US,en;q=0.9'); 
-
-	const cfHeadersToRemove = [
-		'cf-connecting-ip',
-		'cf-ipcountry',
-		'cf-ray',
-		'cf-visitor',
-		'cdn-loop',
-		'x-forwarded-proto', 
-		'x-forwarded-for', 
-		'true-client-ip', 
-	];
-
-
-	try {
-		console.log(`Sending request to Gemini: ${geminiUrl}`);
-		// Log headers being sent to Gemini (excluding API key for security)
-		const headersToSend = new Headers(geminiRequestHeaders); // Clone for logging
-		console.log("Gemini Request Headers:", Object.fromEntries(headersToSend.entries()));
-
-		const geminiResponse = await fetch(geminiUrl, {
-			method: 'POST',
-			headers: geminiRequestHeaders, // Use the cleaned headers
-			body: JSON.stringify(geminiRequestBody),
-		});
-
-		// Increment usage count (only if successful or specific errors like 429?)
-		// --- Handle Gemini Response ---
-		// Need to read the body for error details later if needed
-		let geminiResponseClone = geminiResponse.clone(); // Clone for potential error reading
-
-		if (geminiResponse.ok) {
-			// Successful request: Increment usage AND reset 429 counters
-			ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory, true)); // Pass true to reset counters
-		} else {
-			// Error handling
-			const errorBodyText = await geminiResponseClone.text(); // Read error from clone
-			console.error(`Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBodyText);
-
-			// Handle specific error statuses
-			if (geminiResponse.status === 429) {
-				// Increment 429 counter and potentially force quota limit
-				ctx.waitUntil(handle429Error(selectedKey.id, env, modelCategory, requestedModelId));
-			} else if (geminiResponse.status === 401 || geminiResponse.status === 403) {
-				// Record persistent key errors
-				console.warn(`Received ${geminiResponse.status} from Gemini for key ${selectedKey.id}. Recording error status.`);
-				ctx.waitUntil(recordKeyError(selectedKey.id, env, geminiResponse.status as 401 | 403));
+		const geminiRequestBody: any = {
+			contents: contents,
+			generationConfig: {
+				...(requestBody.temperature && { temperature: requestBody.temperature }),
+				...(requestBody.top_p && { topP: requestBody.top_p }),
+				...(requestBody.max_tokens && { maxOutputTokens: requestBody.max_tokens }),
+				...(requestBody.stop && { stopSequences: Array.isArray(requestBody.stop) ? requestBody.stop : [requestBody.stop] }),
 			}
-			// No specific action needed for other errors in terms of key state management
+		};
+		if (!safetyEnabled) {
+			geminiRequestBody.safetySettings = [
+				{ category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' }, 
+				{ category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
+				{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' },
+				{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
+				{ category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' } 
+			];
+		}
+		if (systemInstruction) geminiRequestBody.systemInstruction = systemInstruction;
+		if (geminiTools) geminiRequestBody.tools = geminiTools;
 
-			// Return error response to the client
-			return new Response(JSON.stringify({
-				error: {
-					message: `Gemini API Error: ${geminiResponse.statusText} - ${errorBodyText}`,
-					type: "gemini_api_error",
-					param: null,
-					code: geminiResponse.status
+
+		// --- Retry Loop ---
+		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+			let selectedKey: { id: string; key: string } | null = null;
+			try {
+				// 1. Get Key inside the loop for each attempt
+				// Pass modelInfo and categoryQuotas to avoid fetching them repeatedly inside getNextAvailableGeminiKey
+				const categoryQuotasConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_CATEGORY_QUOTAS, "json") as CategoryQuotas | null;
+				selectedKey = await getNextAvailableGeminiKey(env, ctx, requestedModelId);
+
+				// 2. Validate Key
+				if (!selectedKey) {
+					console.error(`Attempt ${attempt}: No available Gemini API Key found.`);
+					if (attempt === 1) {
+						lastErrorBody = { error: "No available Gemini API Key configured or all keys are currently rate-limited/invalid." };
+						lastErrorStatus = 503;
+						break; // Exit loop immediately if no key on first try
+					} else {
+						console.error(`Attempt ${attempt}: No more keys to try after previous 429.`);
+						// Keep the last recorded 429 error
+						break; // Exit loop
+					}
 				}
-			}), {
-				status: geminiResponse.status, // Use Gemini's status code
-				headers: { 'Content-Type': 'application/json', ...corsHeaders() }
-			});
-		}
-
-		// --- Handle Response Transformation ---
-		const responseHeaders = new Headers({
-			'Content-Type': stream ? 'text/event-stream' : 'application/json',
-			'Cache-Control': 'no-cache',
-			'Connection': 'keep-alive',
-			...corsHeaders()
-		});
-
-if (stream && geminiResponse.body) {
-	const textDecoder = new TextDecoder();
-	let buffer = '';
-	
-	// Create a TransformStream to process Gemini SSE chunks
-	const transformer = new TransformStream({
-		async transform(chunk, controller) {
-			buffer += textDecoder.decode(chunk, { stream: true });
-			
-			const lines = buffer.split('\n');
-			buffer = lines.pop() || '';
-			
-			for (const line of lines) {
-				if (line.startsWith('data: ')) {
+				
+				// --- Simple Quota Check (Moved inside loop, simplified as getNextAvailable does thorough check) ---
+				// This is a quick check; getNextAvailableGeminiKey already filters based on quota
+				const keyKvName = `key:${selectedKey.id}`;
+				const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
+				if (keyInfoJson) {
 					try {
-						if (line.trim() === 'data: [DONE]') {
-							controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-							continue;
-						}
-						
-						const jsonData = JSON.parse(line.substring(6)); // Remove "data: "
-						// console.log("Received Gemini chunk:", JSON.stringify(jsonData, null, 2)); // Verbose
-						
-						const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!); // Pass modelId
-						if (openaiChunkStr) {
-							controller.enqueue(new TextEncoder().encode(openaiChunkStr));
+						const keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
+						const todayInLA = getTodayInLA();
+						if (keyInfoData.usageDate === todayInLA) {
+							// Check if error status exists
+							if (keyInfoData.errorStatus === 401 || keyInfoData.errorStatus === 403) {
+								console.warn(`Attempt ${attempt}: Key ${selectedKey.id} has error status ${keyInfoData.errorStatus}, skipping.`);
+								continue; // Try next key immediately
+							}
+							// Note: Detailed quota check is primarily handled by getNextAvailableGeminiKey now
 						}
 					} catch (e) {
-						console.error("Error parsing or transforming stream line:", line, e);
-						controller.enqueue(new TextEncoder().encode(`data: {"error": "Error processing stream chunk: ${e instanceof Error ? e.message : String(e)}"}\n\n`));
+						console.error(`Attempt ${attempt}: Failed to parse key info for quick check (key: ${selectedKey.id}):`, e);
+						// Continue to attempt fetch anyway? Or skip? Let's skip.
+						continue;
 					}
+				} else {
+					console.warn(`Attempt ${attempt}: Key info for ${selectedKey.id} not found in KV. Skipping.`);
+					continue; // Key exists in list but not in detail, skip
 				}
-			}
-		},
-		flush(controller) {
-			if (buffer.length > 0 && buffer.startsWith('data: ')) {
-				try {
-					if (buffer.trim() === 'data: [DONE]') {
-						controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-					} else {
-						const jsonData = JSON.parse(buffer.substring(6));
-						const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
-						if (openaiChunkStr) {
-							controller.enqueue(new TextEncoder().encode(openaiChunkStr));
+				// --- End Simple Quota Check ---
+
+
+				console.log(`Attempt ${attempt}: Proxying request for model: ${requestedModelId}, Category: ${modelCategory}, KeyID: ${selectedKey.id}, Safety: ${safetyEnabled}`);
+
+				// 4. Prepare and Send Request to Gemini
+				const apiAction = stream ? 'streamGenerateContent' : 'generateContent';
+				const querySeparator = stream ? '?alt=sse&' : '?'; // Added alt=sse for streaming
+				const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
+
+				const geminiRequestHeaders = new Headers();
+				geminiRequestHeaders.set('Content-Type', 'application/json');
+				geminiRequestHeaders.set('User-Agent', 'Mozilla/5.0 (Cloudflare Worker)'); // Identify worker
+				geminiRequestHeaders.set('Accept', stream ? 'text/event-stream' : 'application/json');
+
+				console.log(`Attempt ${attempt}: Sending ${stream ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);
+
+				const geminiResponse = await fetch(geminiUrl, {
+					method: 'POST',
+					headers: geminiRequestHeaders,
+					body: JSON.stringify(geminiRequestBody),
+				});
+
+				// 5. Handle Gemini Response Status and Errors
+				if (!geminiResponse.ok) {
+					const errorBodyText = await geminiResponse.text(); // Read error body once
+					console.error(`Attempt ${attempt}: Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBodyText);
+
+					lastErrorStatus = geminiResponse.status;
+					try {
+						// Try to parse standard Gemini error structure first
+						const parsedError = JSON.parse(errorBodyText);
+						lastErrorBody = parsedError.error ? { error: parsedError.error } : { error: { message: errorBodyText, code: geminiResponse.status } };
+					} catch {
+						// Fallback if parsing fails
+						lastErrorBody = { error: { message: errorBodyText, code: geminiResponse.status } };
+					}
+					if (!lastErrorBody.error.type) lastErrorBody.error.type = `gemini_api_error_${geminiResponse.status}`;
+
+					// Handle specific errors impacting key status
+					if (geminiResponse.status === 429) {
+						ctx.waitUntil(handle429Error(selectedKey.id, env, modelCategory!, requestedModelId));
+						if (attempt < MAX_RETRIES) {
+							console.warn(`Attempt ${attempt}: Received 429, trying next key...`);
+							continue; // Go to the next iteration
+						} else {
+							console.error(`Attempt ${attempt}: Received 429, but max retries reached.`);
+							break; // Max retries reached for 429
 						}
+					} else if (geminiResponse.status === 401 || geminiResponse.status === 403) {
+						ctx.waitUntil(recordKeyError(selectedKey.id, env, geminiResponse.status as 401 | 403));
+						break; // Do not retry for 401/403
+					} else {
+						// For other errors (400, 500, etc.), do not retry
+						console.error(`Attempt ${attempt}: Received non-retryable error ${geminiResponse.status}.`);
+						break;
 					}
-				} catch (e) {
-					console.error("Error handling final buffer:", buffer, e);
-				}
+				} else {
+					// 6. Process Successful Response
+					console.log(`Attempt ${attempt}: Request successful with key ${selectedKey.id}.`);
+					ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory, true)); // Reset 429 counters on success
+
+					// --- Handle Response Transformation (moved from outside loop) ---
+					const responseHeaders = new Headers({
+						'Content-Type': stream ? 'text/event-stream' : 'application/json',
+						'Cache-Control': 'no-cache',
+						'Connection': 'keep-alive',
+						...corsHeaders()
+					});
+
+					if (stream && geminiResponse.body) {
+						const textDecoder = new TextDecoder();
+						let buffer = '';
+						const transformer = new TransformStream({
+							async transform(chunk, controller) {
+								buffer += textDecoder.decode(chunk, { stream: true });
+								const lines = buffer.split('\n');
+								buffer = lines.pop() || '';
+								for (const line of lines) {
+									if (line.startsWith('data: ')) {
+										try {
+											if (line.trim() === 'data: [DONE]') {
+												controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+												continue;
+											}
+											const jsonData = JSON.parse(line.substring(6));
+											const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
+											if (openaiChunkStr) controller.enqueue(new TextEncoder().encode(openaiChunkStr));
+										} catch (e) {
+											console.error("Error parsing/transforming stream line:", line, e);
+											controller.enqueue(new TextEncoder().encode(`data: {"error": "Error processing stream chunk: ${e instanceof Error ? e.message : String(e)}"}\n\n`));
+										}
+									}
+								}
+							},
+							flush(controller) {
+								if (buffer.length > 0 && buffer.startsWith('data: ')) {
+									try {
+										if (buffer.trim() === 'data: [DONE]') {
+											controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+										} else {
+											const jsonData = JSON.parse(buffer.substring(6));
+											const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
+											if (openaiChunkStr) controller.enqueue(new TextEncoder().encode(openaiChunkStr));
+										}
+									} catch (e) { console.error("Error handling final buffer:", buffer, e); }
+								}
+								controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+							}
+						});
+						return new Response(geminiResponse.body.pipeThrough(transformer), { status: 200, headers: responseHeaders });
+					} else if (!stream) {
+						const geminiJson = await geminiResponse.json();
+						const openaiJsonString = transformGeminiResponseToOpenAI(geminiJson, requestedModelId!);
+						return new Response(openaiJsonString, { status: 200, headers: responseHeaders });
+					} else {
+						lastErrorBody = { error: "Gemini response body missing for stream" };
+						lastErrorStatus = 500;
+						break; // Exit loop if stream body is missing
+					}
+				} // End geminiResponse.ok check
+
+			} catch (fetchError) {
+				// Catch network errors or other errors during fetch/key selection within an attempt
+				console.error(`Attempt ${attempt}: Error during proxy call:`, fetchError);
+				lastErrorBody = { error: { message: `Internal Worker Error during attempt ${attempt}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`, type: 'worker_internal_error' } };
+				lastErrorStatus = 500;
+				break; // If a network error occurs, break the loop
 			}
-			
-			controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-		}
-	});
+		} // --- End Retry Loop ---
 
-	// Pipe the Gemini response body through the transformer
-	const transformedStream = geminiResponse.body.pipeThrough(transformer);
+		// If the loop finished, return the last recorded error.
+		console.error(`All ${MAX_RETRIES} attempts failed or loop broken. Returning last recorded error (Status: ${lastErrorStatus}).`);
+		return new Response(JSON.stringify(lastErrorBody), {
+			status: lastErrorStatus,
+			headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+		});
 
-	return new Response(transformedStream, {
-		status: 200,
-		headers: responseHeaders
-	});
-
-		} else if (!stream) {
-			// Handle non-streaming response
-			const geminiJson = await geminiResponse.json();
-			const openaiJsonString = transformGeminiResponseToOpenAI(geminiJson, requestedModelId!);
-			return new Response(openaiJsonString, {
-				status: 200,
-				headers: responseHeaders
-			});
-		} else {
-			return new Response(JSON.stringify({ error: "Gemini response body missing" }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
-		}
-
-	} catch (error) {
-		console.error("Error during Gemini API call or transformation:", error);
-		return new Response(JSON.stringify({ error: `Internal error: ${error instanceof Error ? error.message : String(error)}` }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+	} catch (initialError) {
+		// Catch errors happening *before* the loop starts (e.g., getting initial config)
+		console.error("Error before starting proxy attempts:", initialError);
+		return new Response(JSON.stringify({ error: { message: `Internal Worker Error: ${initialError instanceof Error ? initialError.message : String(initialError)}`, type: 'worker_setup_error' } }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json', ...corsHeaders() }
+		});
 	}
 }
 
