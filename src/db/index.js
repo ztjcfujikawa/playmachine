@@ -2,9 +2,14 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
-// Construct the database path relative to the project root
-// Ensure data directory exists
-const dataDir = path.resolve(__dirname, '..', '..', 'data');
+// Construct the database path
+let dataDir;
+if (process.env.HUGGING_FACE === '1') {
+  dataDir = '/tmp/data';
+  console.log('Running in HuggingFace environment, using directory:', dataDir);
+} else {
+  dataDir = path.resolve(__dirname, '..', '..', 'data');
+}
 if (!fs.existsSync(dataDir)) {
   console.log(`Creating data directory: ${dataDir}`);
   fs.mkdirSync(dataDir, { recursive: true });

@@ -1,0 +1,10 @@
+FROM dreamhartley705/gemini-proxy-panel:latest
+ENV HUGGING_FACE=1
+ENV PORT=7860
+USER root
+RUN mkdir -p /tmp/data && \
+    chmod 777 /tmp/data && \
+    chown -R node:node /tmp/data
+USER node
+EXPOSE 7860
+CMD [ "npm", "start" ]
