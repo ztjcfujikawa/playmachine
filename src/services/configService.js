@@ -1,4 +1,4 @@
-const db = require('../db');
+const { db, syncToGitHub } = require('../db');
 
 // --- Helper Functions for DB Interaction ---
 
@@ -96,6 +96,9 @@ async function setSetting(key, value) {
         ? JSON.stringify(value)
         : String(value); // Ensure it's a string if not object/array
     await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
+    
+    // Sync updates to GitHub
+    await syncToGitHub();
 }
 
 
@@ -146,6 +149,9 @@ async function setModelConfig(modelId, category, dailyQuota, individualQuota) {
 
 
     await runDb(sql, [modelId, category, dailyQuotaDb, individualQuotaDb]);
+    
+    // Sync updates to GitHub
+    await syncToGitHub();
 }
 
 /**
@@ -158,6 +164,9 @@ async function deleteModelConfig(modelId) {
      if (result.changes === 0) {
         throw new Error(`Model '${modelId}' not found for deletion.`);
     }
+    
+    // Sync updates to GitHub
+    await syncToGitHub();
 }
 
 
@@ -235,6 +244,9 @@ async function addWorkerKey(apiKey, description = '') {
     `;
     try {
         await runDb(sql, [apiKey, description, 1]); // Default safety_enabled to true (1)
+        
+        // Sync updates to GitHub
+        await syncToGitHub();
     } catch (err) {
          if (err.code === 'SQLITE_CONSTRAINT') { // Handle potential unique constraint violation
             throw new Error(`Worker key '${apiKey}' already exists.`);
@@ -253,8 +265,11 @@ async function updateWorkerKeySafety(apiKey, safetyEnabled) {
      const sql = `UPDATE worker_keys SET safety_enabled = ? WHERE api_key = ?`;
      const result = await runDb(sql, [safetyEnabled ? 1 : 0, apiKey]);
      if (result.changes === 0) {
-         throw new Error(`Worker key '${apiKey}' not found for updating safety settings.`);
+          throw new Error(`Worker key '${apiKey}' not found for updating safety settings.`);
      }
+     
+     // Sync updates to GitHub
+     await syncToGitHub();
 }
 
 
@@ -266,9 +281,12 @@ async function updateWorkerKeySafety(apiKey, safetyEnabled) {
 async function deleteWorkerKey(apiKey) {
     const result = await runDb('DELETE FROM worker_keys WHERE api_key = ?', [apiKey]);
     if (result.changes === 0) {
-        throw new Error(`Worker key '${apiKey}' not found for deletion.`);
-    }
-}
+         throw new Error(`Worker key '${apiKey}' not found for deletion.`);
+     }
+     
+     // Sync updates to GitHub
+     await syncToGitHub();
+ }
 
 
 module.exports = {

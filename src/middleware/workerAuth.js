@@ -1,4 +1,4 @@
-const db = require('../db'); // Import the database connection
+const { db } = require('../db'); // Import the database connection
 
 /**
  * Express middleware to validate the Worker API Key provided in the Authorization header.

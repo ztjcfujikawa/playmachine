@@ -4,6 +4,7 @@ const requireAdminAuth = require('../middleware/adminAuth');
 const configService = require('../services/configService');
 const geminiKeyService = require('../services/geminiKeyService');
 const fetch = require('node-fetch'); // For testing keys and fetching models
+const { syncToGitHub } = require('../db'); // Import GitHub sync function
 
 const router = express.Router();
 
@@ -36,6 +37,8 @@ router.route('/gemini-keys')
                 return res.status(400).json({ error: 'Request body must include a valid API key (string)' });
             }
             const result = await geminiKeyService.addGeminiKey(key, name);
+            // Sync to GitHub after database change
+            await syncToGitHub();
             res.status(201).json({ success: true, ...result });
         } catch (error) {
              if (error.message.includes('duplicate API key')) {
@@ -52,6 +55,8 @@ router.delete('/gemini-keys/:id', async (req, res, next) => {
              return res.status(400).json({ error: 'Missing key ID in path' });
         }
         await geminiKeyService.deleteGeminiKey(keyId);
+        // Sync to GitHub after database change
+        await syncToGitHub();
         res.json({ success: true, id: keyId });
     } catch (error) {
          if (error.message.includes('not found')) {
@@ -98,17 +103,18 @@ router.post('/test-gemini-key', async (req, res, next) => {
             isSuccess = response.ok;
 
             if (isSuccess) {
-                 // Increment usage (async, don't wait)
-                 geminiKeyService.incrementKeyUsage(keyId, modelId, modelCategory)
-                     .catch(err => console.error("Error incrementing usage during test:", err));
+                 // Increment usage and sync to GitHub
+                 await geminiKeyService.incrementKeyUsage(keyId, modelId, modelCategory);
                  // Clear any previous error status on successful test
-                  geminiKeyService.clearKeyError(keyId)
-                     .catch(err => console.error("Error clearing key error during test:", err));
+                 await geminiKeyService.clearKeyError(keyId);
+                 // Sync to GitHub after database changes
+                 await syncToGitHub();
             } else {
                  // Record 401/403 errors
                  if (testResponseStatus === 401 || testResponseStatus === 403) {
-                     geminiKeyService.recordKeyError(keyId, testResponseStatus)
-                         .catch(err => console.error("Error recording key error during test:", err));
+                     await geminiKeyService.recordKeyError(keyId, testResponseStatus);
+                     // Sync to GitHub after database change
+                     await syncToGitHub();
                  }
             }
 
@@ -186,6 +192,8 @@ router.post('/clear-key-error', async (req, res, next) => {
             return res.status(400).json({ error: 'Request body must include a valid keyId (string)' });
         }
         await geminiKeyService.clearKeyError(keyId);
+        // Sync to GitHub after database change
+        await syncToGitHub();
         res.json({ success: true, id: keyId });
     } catch (error) {
          if (error.message.includes('not found')) {
@@ -213,6 +221,8 @@ router.route('/worker-keys')
                  return res.status(400).json({ error: 'Request body must include a valid non-empty string: key' });
             }
             await configService.addWorkerKey(key.trim(), description);
+            // Sync to GitHub after database change
+            await syncToGitHub();
             res.status(201).json({ success: true, key: key.trim() });
         } catch (error) {
             if (error.message.includes('already exists')) {
@@ -229,6 +239,8 @@ router.delete('/worker-keys/:key', async (req, res, next) => { // Use key in pat
              return res.status(400).json({ error: 'Missing worker key in path' });
          }
         await configService.deleteWorkerKey(keyToDelete);
+        // Sync to GitHub after database change
+        await syncToGitHub();
         res.json({ success: true, key: keyToDelete });
     } catch (error) {
          if (error.message.includes('not found')) {
@@ -245,6 +257,8 @@ router.post('/worker-keys/safety-settings', async (req, res, next) => { // Speci
             return res.status(400).json({ error: 'Request body must include key (string) and safetyEnabled (boolean)' });
         }
         await configService.updateWorkerKeySafety(key, safetyEnabled);
+        // Sync to GitHub after database change
+        await syncToGitHub();
         res.json({ success: true, key: key, safetyEnabled: safetyEnabled });
     } catch (error) {
          if (error.message.includes('not found')) {
@@ -282,6 +296,8 @@ router.route('/models')
              }
 
              await configService.setModelConfig(id, category, dailyQuotaNum, individualQuotaNum);
+             // Sync to GitHub after database change
+             await syncToGitHub();
              res.status(200).json({ success: true, id, category, dailyQuota: dailyQuotaNum, individualQuota: individualQuotaNum }); // Use 200 for add/update simplicity
         } catch (error) {
              if (error.message.includes('must be a non-negative integer')) {
@@ -298,6 +314,8 @@ router.delete('/models/:id', async (req, res, next) => { // Use ID in path
              return res.status(400).json({ error: 'Missing model ID in path' });
          }
         await configService.deleteModelConfig(modelIdToDelete);
+        // Sync to GitHub after database change
+        await syncToGitHub();
         res.json({ success: true, id: modelIdToDelete });
     } catch (error) {
         if (error.message.includes('not found')) {
@@ -323,7 +341,9 @@ router.route('/category-quotas')
             const { proQuota, flashQuota } = parseBody(req);
             // Service layer handles detailed validation
              await configService.setCategoryQuotas(proQuota, flashQuota);
-            res.json({ success: true, proQuota, flashQuota });
+             // Sync to GitHub after database change
+             await syncToGitHub();
+             res.json({ success: true, proQuota, flashQuota });
         } catch (error) {
              if (error.message.includes('must be non-negative numbers')) {
                  return res.status(400).json({ error: error.message });

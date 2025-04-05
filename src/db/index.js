@@ -1,28 +1,97 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
+const GitHubSync = require('../utils/githubSync');
 
 // Construct the database path
-const dataDir = path.resolve(__dirname, '..', '..', 'data');
+let dataDir;
+
+// Use /home/user/data directory on Hugging Face Space
+if (process.env.HUGGING_FACE === '1') {
+  dataDir = '/home/user/data';
+  console.log(`Using Hugging Face persistent data directory: ${dataDir}`);
+} else {
+  dataDir = path.resolve(__dirname, '..', '..', 'data');
+}
+
 if (!fs.existsSync(dataDir)) {
   console.log(`Creating data directory: ${dataDir}`);
-  fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (err) {
+    console.error(`Error creating data directory: ${err.message}`);
+    console.error('Will attempt to use ./data as fallback');
+    dataDir = path.resolve(__dirname, '..', '..', 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+  }
 }
 
 const dbPath = path.resolve(dataDir, 'database.db');
 console.log(`Database path: ${dbPath}`); // Log the path for debugging
 
+// Initialize GitHub sync if configured
+const githubProject = process.env.GITHUB_PROJECT;
+const githubToken = process.env.GITHUB_PROJECT_PAT;
+const githubEncryptKey = process.env.GITHUB_ENCRYPT_KEY;
+let githubSync = null;
+
+if (githubProject && githubToken) {
+  console.log(`GitHub sync configured for repository: ${githubProject}`);
+  githubSync = new GitHubSync(githubProject, githubToken, dbPath, githubEncryptKey);
+  
+  if (githubEncryptKey && githubEncryptKey.length >= 32) {
+    console.log('GitHub data encryption enabled, using AES-256-CBC algorithm');
+  } else if (githubEncryptKey) {
+    console.warn('GitHub encryption key length is insufficient, requires at least 32 characters, data will be stored unencrypted');
+  } else {
+    console.log('GitHub data encryption not enabled, data will be stored unencrypted');
+  }
+}
+
 // Initialize the database connection
 // The OPEN_READWRITE | OPEN_CREATE flag ensures the file is created if it doesn't exist.
-const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, async (err) => {
   if (err) {
     console.error('Error opening database:', err.message);
     throw err; // Throw error to stop the application if DB connection fails
   } else {
     console.log('Connected to the SQLite database.');
-    initializeDatabase();
+    
+    // Initialize database schema first
+    await new Promise((resolve, reject) => {
+      initializeDatabase((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    
+    // Try to download database from GitHub if configured
+    if (githubSync) {
+      try {
+        await githubSync.downloadDatabase();
+      } catch (err) {
+        console.error('Failed to download database from GitHub:', err.message);
+        console.log('Continuing with local database...');
+      }
+    }
   }
 });
+
+// Function to manually trigger GitHub sync
+async function syncToGitHub() {
+  if (githubSync) {
+    try {
+      await githubSync.uploadDatabase();
+      return true;
+    } catch (err) {
+      console.error('Failed to upload database to GitHub:', err.message);
+      return false;
+    }
+  }
+  return false;
+}
 
 // SQL statements to create tables (if they don't exist)
 const createTablesSQL = `
@@ -75,13 +144,15 @@ const createTablesSQL = `
 `;
 
 // Function to initialize the database schema
-function initializeDatabase() {
+function initializeDatabase(callback) {
   db.exec(createTablesSQL, (err) => {
     if (err) {
       console.error('Error creating database tables:', err.message);
+      if (callback) callback(err);
     } else {
       console.log('Database tables checked/created successfully.');
       // You might seed initial data here if necessary
+      if (callback) callback(null);
     }
   });
 }
@@ -108,5 +179,8 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// Export the database connection instance
-module.exports = db;
+// Export the database connection instance and sync function
+module.exports = {
+  db,
+  syncToGitHub
+};

@@ -1,4 +1,4 @@
-const db = require('../db');
+const { db, syncToGitHub } = require('../db');
 const configService = require('./configService'); // Use configService for DB helpers and settings
 const { getTodayInLA } = require('../utils/helpers');
 const crypto = require('crypto'); // For generating key IDs
@@ -208,11 +208,14 @@ async function getErrorKeys() {
  * @returns {Promise<void>}
  */
 async function clearKeyError(keyId) {
-     const result = await configService.runDb('UPDATE gemini_keys SET error_status = NULL WHERE id = ?', [keyId]);
-     if (result.changes === 0) {
-         throw new Error(`Key with ID '${keyId}' not found for clearing error status.`);
-     }
-     console.log(`Cleared error status for key ${keyId}.`);
+        const result = await configService.runDb('UPDATE gemini_keys SET error_status = NULL WHERE id = ?', [keyId]);
+        if (result.changes === 0) {
+            throw new Error(`Key with ID '${keyId}' not found for clearing error status.`);
+        }
+        console.log(`Cleared error status for key ${keyId}.`);
+        
+        // Sync updates to GitHub
+        await syncToGitHub();
 }
 
 /**
@@ -233,6 +236,8 @@ async function recordKeyError(keyId, status) {
         );
          if (result.changes > 0) {
             console.log(`Recorded error status ${status} for key ${keyId}.`);
+            // Sync updates to GitHub
+            await syncToGitHub();
          } else {
              console.warn(`Cannot record error: Key info not found for ID: ${keyId}`);
          }
@@ -449,7 +454,10 @@ async function incrementKeyUsage(keyId, modelId, category) {
             JSON.stringify(consecutive429Counts), // Store empty object (reset counters)
             keyId
         ]);
-         console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
+        console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
+
+        // Sync updates to GitHub
+        await syncToGitHub();
 
     } catch (e) {
         console.error(`Failed to increment usage for key ${keyId}:`, e);
@@ -569,10 +577,13 @@ async function forceSetQuotaToLimit(keyId, category, modelId, counterKey) {
             JSON.stringify(categoryUsage),
             JSON.stringify(consecutive429Counts),
             keyId
-         ]);
+          ]);
          console.log(`Key ${keyId} quota forced for category ${category}${modelId ? ` (model: ${modelId})` : ''} for date ${usageDate}.`);
+         
+         // Sync updates to GitHub
+         await syncToGitHub();
 
-     } catch (e) {
+      } catch (e) {
          console.error(`Failed to force quota limit for key ${keyId}:`, e);
      }
 }
@@ -645,9 +656,12 @@ async function handle429Error(keyId, category, modelId) {
             // Limit not reached, just save the updated count
              await configService.runDb(
                 'UPDATE gemini_keys SET consecutive_429_counts = ? WHERE id = ?',
-                [JSON.stringify(consecutive429Counts), keyId]
-             );
-        }
+                 [JSON.stringify(consecutive429Counts), keyId]
+              );
+              
+              // Sync updates to GitHub
+              await syncToGitHub();
+         }
 
     } catch (e) {
         console.error(`Failed to handle 429 error for key ${keyId}:`, e);
