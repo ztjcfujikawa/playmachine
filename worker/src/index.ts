@@ -563,12 +563,13 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	let modelCategory: 'Pro' | 'Flash' | 'Custom' | undefined;
 	let safetyEnabled = true;
 	let modelsConfig: Record<string, ModelConfig> | null;
+	let safetySettingsJson: string | null; // Declare safetySettingsJson here
 
 	try {
 		// Fetch models config and safety settings once before the loop
 		[modelsConfig, safetySettingsJson] = await Promise.all([
 			env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Promise<Record<string, ModelConfig> | null>,
-			workerApiKey ? env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY) : Promise.resolve(null)
+			workerApiKey ? env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY) : Promise.resolve(null) // Fetches string or null
 		]);
 
 		modelInfo = modelsConfig?.[requestedModelId];
