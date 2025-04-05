@@ -140,8 +140,9 @@ router.post('/test-gemini-key', async (req, res, next) => {
 // --- Get Available Gemini Models --- (/api/admin/gemini-models)
 router.get('/gemini-models', async (req, res, next) => {
      try {
-         // Find *any* valid key to make the models list request
-         const availableKey = await geminiKeyService.getNextAvailableGeminiKey(); // No specific model needed
+         // Find *any* valid key to make the models list request, without updating the rotation index
+         // This prevents writing to the database and GitHub sync on page refreshes
+         const availableKey = await geminiKeyService.getNextAvailableGeminiKey(null, false); // Don't update index for read-only operation
          if (!availableKey) {
              console.warn("No available Gemini key found to fetch models list.");
              return res.json([]); // Return empty list if no keys work

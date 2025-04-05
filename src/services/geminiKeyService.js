@@ -259,9 +259,10 @@ async function recordKeyError(keyId, status) {
  * Selects the next available Gemini API key using round-robin.
  * Skips keys with errors or quota limits reached.
  * @param {string} [requestedModelId] The model being requested, for quota checking.
+ * @param {boolean} [updateIndex=true] Whether to update the index in the database. Set to false for read-only operations.
  * @returns {Promise<{ id: string; key: string } | null>} The selected key ID and value, or null if none available.
  */
-async function getNextAvailableGeminiKey(requestedModelId) {
+async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
     try {
         // 1. Get key list, current index, configs in parallel
         const [allKeyIds, currentIndexSetting, modelsConfig, categoryQuotas] = await Promise.all([
@@ -386,15 +387,19 @@ async function getNextAvailableGeminiKey(requestedModelId) {
             return null;
         }
 
-        // Save the next index for the subsequent request
-        // Use Promise.allSettled to avoid unhandled rejections if settings update fails
-        await Promise.allSettled([
-             configService.setSetting('gemini_key_index', currentIndex),
-             configService.setSetting('last_used_gemini_key_id', selectedKeyData.id)
-        ]);
-
-
-        console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyData.id} (next index will be: ${currentIndex})`);
+        // Only update indices if updateIndex is true (for API operations)
+        // Skip for read-only operations like fetching model lists
+        if (updateIndex) {
+            // Save the next index for the subsequent request
+            // Use Promise.allSettled to avoid unhandled rejections if settings update fails
+            await Promise.allSettled([
+                configService.setSetting('gemini_key_index', currentIndex),
+                configService.setSetting('last_used_gemini_key_id', selectedKeyData.id)
+            ]);
+            console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyData.id} (next index will be: ${currentIndex})`);
+        } else {
+            console.log(`Selected Gemini Key ID (read-only): ${selectedKeyData.id} (index not updated)`);
+        }
         return selectedKeyData;
 
     } catch (error) {
