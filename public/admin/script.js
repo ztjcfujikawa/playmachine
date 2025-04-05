@@ -909,40 +909,99 @@ function hideError(container = errorMessageDiv) {
 
     // --- Event Handlers ---
 
-    // Add Gemini Key (no changes needed)
+    // Add Gemini Key with support for batch input
     addGeminiKeyForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(addGeminiKeyForm);
         const data = Object.fromEntries(formData.entries());
-        const geminiKeyValue = data.key ? data.key.trim() : '';
+        const geminiKeyInput = data.key ? data.key.trim() : '';
 
-        // --- Gemini API Key Format Validation ---
-        const geminiKeyRegex = /^AIzaSy[A-Za-z0-9_-]{33}$/;
-        if (!geminiKeyValue) {
+        // Check if input is empty
+        if (!geminiKeyInput) {
              showError("API Key Value is required.");
              return;
         }
-        if (!geminiKeyRegex.test(geminiKeyValue)) {
-            showError("Invalid Gemini API Key format.");
-            return; // Stop submission if format is incorrect
+
+        // Split input, supporting comma-separated keys
+        const geminiKeys = geminiKeyInput.split(',').map(key => key.trim()).filter(key => key !== '');
+        
+        // Check if there are any keys to process
+        if (geminiKeys.length === 0) {
+            showError("No valid API Keys found.");
+            return;
         }
-        // --- End Validation ---
 
-        // Create the data object to send, without the id field
-        const keyData = {
-            key: geminiKeyValue,
-            name: data.name ? data.name.trim() : ''
-        };
-
-        const result = await apiFetch('/gemini-keys', {
-            method: 'POST',
-            body: JSON.stringify(keyData),
+        // Gemini API Key format validation regex
+        const geminiKeyRegex = /^AIzaSy[A-Za-z0-9_-]{33}$/;
+        
+        // Check format and remove duplicates
+        const validKeys = [];
+        const invalidKeys = [];
+        const seenKeys = new Set();
+        
+        for (const key of geminiKeys) {
+            // Skip duplicates
+            if (seenKeys.has(key)) {
+                continue;
+            }
+            
+            seenKeys.add(key);
+            
+            // Validate format
+            if (!geminiKeyRegex.test(key)) {
+                invalidKeys.push(key);
+            } else {
+                validKeys.push(key);
+            }
+        }
+        
+        // If no valid keys, exit
+        if (validKeys.length === 0) {
+            showError("No valid API Keys found. Please check the format.");
+            return;
+        }
+        
+        // Show warnings about invalid keys but continue with valid ones
+        if (invalidKeys.length > 0) {
+            const maskedInvalidKeys = invalidKeys.map(key => {
+                if (key.length > 10) {
+                    return `${key.substring(0, 6)}...${key.substring(key.length - 4)}`;
+                }
+                return key;
+            });
+            showError(`Invalid API key format detected: ${maskedInvalidKeys.join(', ')}`);
+        }
+        
+        // Create an array of promises for concurrent execution
+        const addPromises = validKeys.map(key => {
+            const keyData = {
+                key: key,
+                name: data.name ? data.name.trim() : ''
+            };
+            
+            return apiFetch('/gemini-keys', {
+                method: 'POST',
+                body: JSON.stringify(keyData),
+            });
         });
-
-        if (result && result.success) {
-            addGeminiKeyForm.reset();
-            await loadGeminiKeys(); // Wait for the list to reload
-            showSuccess('Gemini key added successfully!');
+        
+        // Execute all requests concurrently
+        showLoading();
+        const results = await Promise.all(addPromises);
+        
+        // Count successes and failures
+        const successCount = results.filter(result => result && result.success).length;
+        const failureCount = validKeys.length - successCount;
+        
+        // Reset form and reload keys
+        addGeminiKeyForm.reset();
+        await loadGeminiKeys();
+        
+        // Show appropriate message based on results
+        if (successCount > 0) {
+            showSuccess(`Successfully added ${successCount} Gemini ${successCount === 1 ? 'key' : 'keys'}.`);
+        } else {
+            showError(`Failed to add any keys.`);
         }
     });
 
