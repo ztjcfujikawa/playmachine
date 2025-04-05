@@ -1,4 +1,4 @@
-const { db, syncToGitHub } = require('../db');
+const { db, syncToGitHub, syncToGitHubImmediate } = require('../db');
 const configService = require('./configService'); // Use configService for DB helpers and settings
 const { getTodayInLA } = require('../utils/helpers');
 const crypto = require('crypto'); // For generating key IDs
@@ -41,6 +41,9 @@ async function addGeminiKey(apiKey, name) {
         currentList.push(keyId);
         await configService.setSetting('gemini_key_list', currentList);
         console.log(`Added key ${keyId} to database and rotation list.`);
+        
+        // Use immediate sync for adding API key (important operation)
+        await syncToGitHubImmediate();
 
         return { id: keyId, name: keyName };
     } catch (err) {
@@ -100,6 +103,9 @@ async function deleteGeminiKey(keyId) {
         console.warn(`Key ID ${trimmedKeyId} was not found in the rotation list.`);
     }
      console.log(`Deleted Gemini key ${trimmedKeyId} from database.`);
+     
+     // Use immediate sync for deleting API key (important operation)
+     await syncToGitHubImmediate();
 }
 
 /**
@@ -455,6 +461,9 @@ async function incrementKeyUsage(keyId, modelId, category) {
             keyId
         ]);
         console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
+        
+        // Sync updates to GitHub
+        await syncToGitHub();
 
     } catch (e) {
         console.error(`Failed to increment usage for key ${keyId}:`, e);

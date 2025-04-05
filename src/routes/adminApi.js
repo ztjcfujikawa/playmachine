@@ -4,7 +4,7 @@ const requireAdminAuth = require('../middleware/adminAuth');
 const configService = require('../services/configService');
 const geminiKeyService = require('../services/geminiKeyService');
 const fetch = require('node-fetch'); // For testing keys and fetching models
-const { syncToGitHub } = require('../db'); // Import GitHub sync function
+const { syncToGitHub, syncToGitHubImmediate } = require('../db'); // Import GitHub sync functions
 
 const router = express.Router();
 

@@ -27,6 +27,11 @@ class GitHubSync {
     }
 
     this.initialSyncCompleted = false;
+    
+    // Delayed sync variables
+    this.pendingSync = false;
+    this.syncTimer = null;
+    this.syncDelay = 60000; // 1 minute delay
   }
 
   // Check if GitHub sync is configured and enabled
@@ -207,6 +212,46 @@ class GitHubSync {
       console.error('Error downloading database from GitHub:', error.message);
       return false;
     }
+  }
+
+  // Schedule a delayed sync
+  scheduleSync(immediate = false) {
+    // If immediate sync is requested, reset any pending delay and perform sync now
+    if (immediate) {
+      if (this.syncTimer) {
+        clearTimeout(this.syncTimer);
+        this.syncTimer = null;
+      }
+      this.pendingSync = false;
+      return this.uploadDatabase();
+    }
+    
+    // If a sync is already scheduled, just mark as pending and return immediately
+    if (this.syncTimer) {
+      console.log('Sync already scheduled. Marking as pending to batch with existing request.');
+      this.pendingSync = true;
+      return Promise.resolve(true);
+    }
+    
+    // Otherwise, schedule a new sync after delay and return immediately
+    console.log(`Scheduling GitHub sync with ${this.syncDelay / 1000} second delay`);
+    this.pendingSync = true;
+    
+    // Set up the timer but return immediately
+    this.syncTimer = setTimeout(async () => {
+      this.pendingSync = false;
+      this.syncTimer = null;
+      
+      try {
+        const result = await this.uploadDatabase();
+        console.log('Delayed GitHub sync completed successfully');
+      } catch (error) {
+        console.error('Error during delayed GitHub sync:', error.message);
+      }
+    }, this.syncDelay);
+    
+    // Return immediately with success - don't wait for the timer
+    return Promise.resolve(true);
   }
 
   // Upload database to GitHub

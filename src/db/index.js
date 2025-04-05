@@ -79,51 +79,41 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
   }
 });
 
-// Sync lock to prevent concurrent sync operations
-let syncInProgress = false;
-let syncPendingCount = 0;
-const MAX_PENDING_SYNCS = 5; // Maximum number of pending syncs to log
-const SYNC_TIMEOUT = 30000; // Sync timeout in milliseconds
+const SYNC_TIMEOUT = 90000; // Sync timeout in milliseconds (only used for immediate syncs)
 
-// Function to manually trigger GitHub sync
-async function syncToGitHub() {
+// Function to trigger GitHub sync with delay
+async function syncToGitHub(immediate = false) {
   if (!githubSync) {
     return false;
   }
 
-  // If sync is already in progress, increment pending count and return
-  if (syncInProgress) {
-    syncPendingCount++;
-    if (syncPendingCount <= MAX_PENDING_SYNCS) {
-      console.log(`GitHub sync already in progress. Pending syncs: ${syncPendingCount}`);
-    }
-    return true; // Return true to indicate sync will be handled (though deferred)
-  }
-
   try {
-    // Set sync lock and reset pending count
-    syncInProgress = true;
-    syncPendingCount = 0;
-    
-    // Add timeout protection
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('GitHub sync timeout')), SYNC_TIMEOUT);
-    });
-    
-    // Execute sync operation with timeout protection
-    const syncResult = await Promise.race([
-      githubSync.uploadDatabase(),
-      timeoutPromise
-    ]);
+    if (immediate) {
+      // Only use timeout protection for immediate syncs
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('GitHub sync timeout')), SYNC_TIMEOUT);
+      });
+      
+      // Execute immediate sync operation with timeout protection
+      const syncResult = await Promise.race([
+        githubSync.scheduleSync(true),
+        timeoutPromise
+      ]);
+    } else {
+      // For delayed syncs, just schedule and return immediately
+      await githubSync.scheduleSync(false);
+    }
     
     return true;
   } catch (err) {
-    console.error('Failed to upload database to GitHub:', err.message);
+    console.error('Failed to schedule GitHub sync:', err.message);
     return false;
-  } finally {
-    // Release lock regardless of success or failure
-    syncInProgress = false;
   }
+}
+
+// Immediate sync for critical operations
+async function syncToGitHubImmediate() {
+  return syncToGitHub(true);
 }
 
 // SQL statements to create tables (if they don't exist)
@@ -212,8 +202,9 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// Export the database connection instance and sync function
+// Export the database connection instance and sync functions
 module.exports = {
   db,
-  syncToGitHub
+  syncToGitHub,
+  syncToGitHubImmediate
 };
