@@ -2,7 +2,7 @@ const fetch = require('node-fetch');
 const configService = require('./configService');
 const geminiKeyService = require('./geminiKeyService');
 const transformUtils = require('../utils/transform');
-const githubSync = require('../utils/githubSync'); // Import githubSync
+const GitHubSync = require('../utils/githubSync'); // Import GitHubSync class
 
 let chatCompletionsSyncCounter = 0; // Counter for chat completions sync
 let lastChatCompletionsSyncTime = 0; // Timestamp of the last sync for this endpoint
@@ -173,7 +173,26 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                         console.log(`Chat completions sync triggered due to ${reason}. Triggering GitHub sync.`);
 
                         // Trigger sync explicitly and run in background
-                        githubSync.sync().catch(err => console.error('Error during periodic chat completions GitHub sync:', err));
+                        try {
+                            // Get GitHub config
+                            const githubConfig = await configService.getGitHubConfig();
+                            if (githubConfig && githubConfig.repo && githubConfig.token) {
+                                // Create GitHubSync instance with config
+                                const githubSyncInstance = new GitHubSync(
+                                    githubConfig.repo, 
+                                    githubConfig.token,
+                                    githubConfig.dbPath || './database.db',
+                                    githubConfig.encryptKey
+                                );
+                                
+                                // Only upload if properly configured
+                                if (githubSyncInstance.isConfigured()) {
+                                    await githubSyncInstance.uploadDatabase();
+                                }
+                            }
+                        } catch (syncErr) {
+                            console.error('Error during periodic chat completions GitHub sync:', syncErr);
+                        }
 
                         chatCompletionsSyncCounter = 0; // Reset counter
                         lastChatCompletionsSyncTime = now; // Update last sync time

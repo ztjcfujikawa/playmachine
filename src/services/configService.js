@@ -289,10 +289,36 @@ async function deleteWorkerKey(apiKey) {
  }
 
 
+// --- GitHub Configuration ---
+
+/**
+ * Gets the GitHub repository configuration.
+ * @returns {Promise<{repo: string, token: string, dbPath: string, encryptKey: string|null}>}
+ */
+async function getGitHubConfig() {
+    return await getSetting('github_config', { repo: '', token: '', dbPath: './database.db', encryptKey: null });
+}
+
+/**
+ * Sets the GitHub repository configuration.
+ * @param {string} repo The GitHub repository in format "username/repo-name"
+ * @param {string} token GitHub personal access token
+ * @param {string} [dbPath='./database.db'] Path to the database file
+ * @param {string|null} [encryptKey=null] Optional encryption key for database file
+ * @returns {Promise<void>}
+ */
+async function setGitHubConfig(repo, token, dbPath = './database.db', encryptKey = null) {
+    await setSetting('github_config', { repo, token, dbPath, encryptKey });
+}
+
+
 module.exports = {
     // Settings
     getSetting,
     setSetting,
+    // GitHub
+    getGitHubConfig,
+    setGitHubConfig,
     // Models
     getModelsConfig,
     setModelConfig,

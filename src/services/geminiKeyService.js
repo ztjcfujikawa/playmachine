@@ -456,9 +456,6 @@ async function incrementKeyUsage(keyId, modelId, category) {
         ]);
         console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
 
-        // Sync updates to GitHub
-        await syncToGitHub();
-
     } catch (e) {
         console.error(`Failed to increment usage for key ${keyId}:`, e);
         // Don't rethrow, allow request to potentially succeed anyway
