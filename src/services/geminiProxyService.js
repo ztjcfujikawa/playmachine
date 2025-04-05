@@ -1,7 +1,12 @@
-const fetch = require('node-fetch'); 
+const fetch = require('node-fetch');
 const configService = require('./configService');
 const geminiKeyService = require('./geminiKeyService');
 const transformUtils = require('../utils/transform');
+const githubSync = require('../utils/githubSync'); // Import githubSync
+
+let chatCompletionsSyncCounter = 0; // Counter for chat completions sync
+let lastChatCompletionsSyncTime = 0; // Timestamp of the last sync for this endpoint
+const SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
     const requestedModelId = openAIRequestBody?.model;
@@ -152,8 +157,29 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                 } else {
                     // 6. Process Successful Response
                     console.log(`Attempt ${attempt}: Request successful with key ${selectedKey.id}.`);
+                    // Increment usage count (assume this updates DB but doesn't sync every time, or its internal sync is secondary)
                     geminiKeyService.incrementKeyUsage(selectedKey.id, requestedModelId, modelCategory)
                          .catch(err => console.error(`Error incrementing usage for key ${selectedKey.id} in background:`, err));
+
+                    // Check and trigger sync based on count or time interval
+                    chatCompletionsSyncCounter++;
+                    const now = Date.now();
+                    const timeSinceLastSync = now - lastChatCompletionsSyncTime;
+                    const shouldSyncByCount = chatCompletionsSyncCounter >= 5;
+                    const shouldSyncByTime = lastChatCompletionsSyncTime > 0 && timeSinceLastSync > SYNC_INTERVAL_MS; // Only sync by time if it has synced at least once before
+
+                    if (shouldSyncByCount || shouldSyncByTime) {
+                        let reason = shouldSyncByCount ? `count threshold (${chatCompletionsSyncCounter})` : `time interval (${(timeSinceLastSync / 60000).toFixed(1)} min)`;
+                        console.log(`Chat completions sync triggered due to ${reason}. Triggering GitHub sync.`);
+
+                        // Trigger sync explicitly and run in background
+                        githubSync.sync().catch(err => console.error('Error during periodic chat completions GitHub sync:', err));
+
+                        chatCompletionsSyncCounter = 0; // Reset counter
+                        lastChatCompletionsSyncTime = now; // Update last sync time
+                    } else {
+                         console.log(`Chat completions sync counter: ${chatCompletionsSyncCounter}, Time since last sync: ${(timeSinceLastSync / 60000).toFixed(1)} min`);
+                    }
 
                     // Return the successful response object
                     return {
