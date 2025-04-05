@@ -1,5 +1,4 @@
 FROM dreamhartley705/gemini-proxy-panel:latest
-ENV HUGGING_FACE=1
 ENV PORT=7860
 USER root
 RUN mkdir -p /tmp/data && \

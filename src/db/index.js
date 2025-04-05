@@ -3,13 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 // Construct the database path
-let dataDir;
-if (process.env.HUGGING_FACE === '1') {
-  dataDir = '/tmp/data';
-  console.log('Running in HuggingFace environment, using directory:', dataDir);
-} else {
-  dataDir = path.resolve(__dirname, '..', '..', 'data');
-}
+const dataDir = path.resolve(__dirname, '..', '..', 'data');
 if (!fs.existsSync(dataDir)) {
   console.log(`Creating data directory: ${dataDir}`);
   fs.mkdirSync(dataDir, { recursive: true });
