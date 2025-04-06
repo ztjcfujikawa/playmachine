@@ -87,5 +87,12 @@ app.use((err, req, res, next) => {
 // --- Start Server ---
 app.listen(port, '0.0.0.0', () => {
     console.log(`Gemini Proxy Panel (Node.js version) listening on port ${port} (all interfaces)`);
-    console.log(`Admin UI should be available at http://localhost:${port}/`);
+    // Check if running in Hugging Face Space
+    if (process.env.HUGGING_FACE === '1' && process.env.SPACE_HOST) {
+        const adminUrl = `https://${process.env.SPACE_HOST}/admin`;
+        console.log(`Hugging Face Space Admin UI: ${adminUrl}`);
+    } else {
+        // Fallback for local or other environments
+        console.log(`Admin UI should be available at http://localhost:${port}/admin (or the server's public address)`);
+    }
 });
