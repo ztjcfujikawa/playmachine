@@ -28,10 +28,10 @@ class GitHubSync {
 
     this.initialSyncCompleted = false;
     
-    // Delayed sync variables
+    // Sync scheduling variables
     this.pendingSync = false;
     this.syncTimer = null;
-    this.syncDelay = 180000; // 3 minute delay
+    this.syncDelay = 300000; // 5 minute delay
   }
 
   // Check if GitHub sync is configured and enabled
@@ -214,16 +214,16 @@ class GitHubSync {
     }
   }
 
-  // Schedule a delayed sync
+  // Schedule a GitHub sync
   scheduleSync() {
-    // If a delayed sync is already scheduled, just mark as pending (to avoid multiple timers)
+    // If a sync is already scheduled, just mark as pending (to avoid multiple timers)
     if (this.syncTimer) {
-      console.log('Delayed sync already scheduled. Marking as pending.');
+      console.log('Sync already scheduled. Marking as pending.');
       this.pendingSync = true;
       return; // No need to return a promise here, scheduling is synchronous
     }
 
-    // Otherwise, schedule a new delayed sync
+    // Otherwise, schedule a new sync
     console.log(`Scheduling GitHub sync with ${this.syncDelay / 1000} second delay`);
     this.pendingSync = true;
 
@@ -232,12 +232,12 @@ class GitHubSync {
       this.pendingSync = false;
       this.syncTimer = null;
 
-      console.log('Starting delayed GitHub sync...');
+      console.log('Starting GitHub sync...');
       try {
         await this.uploadDatabase();
-        console.log('Delayed GitHub sync completed successfully');
+        console.log('GitHub sync completed successfully');
       } catch (error) {
-        console.error('Error during delayed GitHub sync:', error.message);
+        console.error('Error during GitHub sync:', error.message);
       }
     }, this.syncDelay);
 
