@@ -1,9 +1,8 @@
 const fetch = require('node-fetch');
-const { syncToGitHub } = require('../db'); // Import the delayed sync function
+const { syncToGitHub } = require('../db'); 
 const configService = require('./configService');
 const geminiKeyService = require('./geminiKeyService');
 const transformUtils = require('../utils/transform');
-// Removed: const GitHubSync = require('../utils/githubSync');
 
 async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
     const requestedModelId = openAIRequestBody?.model;
@@ -158,11 +157,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                     geminiKeyService.incrementKeyUsage(selectedKey.id, requestedModelId, modelCategory)
                           .catch(err => console.error(`Error incrementing usage for key ${selectedKey.id} in background:`, err));
 
-                    // Schedule a delayed sync after successful call
-                    console.log(`Chat completions call completed successfully. Scheduling delayed GitHub sync.`);
-                    syncToGitHub().catch(syncErr => { // Call the imported function
-                        console.error('Error scheduling delayed GitHub sync after chat completion:', syncErr);
-                    });
+                    console.log(`Chat completions call completed successfully.`);
 
                     // Return the successful response object
                     return {

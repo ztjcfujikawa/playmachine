@@ -393,9 +393,10 @@ async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
             // Save the next index for the subsequent request
             // Use Promise.allSettled to avoid unhandled rejections if settings update fails
             await Promise.allSettled([
-                configService.setSetting('gemini_key_index', currentIndex),
-                configService.setSetting('last_used_gemini_key_id', selectedKeyData.id)
+                configService.setSetting('gemini_key_index', currentIndex, true),
+                configService.setSetting('last_used_gemini_key_id', selectedKeyData.id, true)
             ]);
+            await syncToGitHub();
             console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyData.id} (next index will be: ${currentIndex})`);
         } else {
             console.log(`Selected Gemini Key ID (read-only): ${selectedKeyData.id} (index not updated)`);
@@ -669,9 +670,6 @@ async function handle429Error(keyId, category, modelId) {
                 'UPDATE gemini_keys SET consecutive_429_counts = ? WHERE id = ?',
                  [JSON.stringify(consecutive429Counts), keyId]
               );
-              
-              // Sync updates to GitHub
-              await syncToGitHub();
          }
 
     } catch (e) {
@@ -687,7 +685,6 @@ module.exports = {
     getNextAvailableGeminiKey,
     incrementKeyUsage,
     handle429Error,
-    // forceSetQuotaToLimit, // Internal helper, not typically exported
     recordKeyError,
     getErrorKeys,
     clearKeyError,

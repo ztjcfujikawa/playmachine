@@ -89,16 +89,19 @@ async function getSetting(key, defaultValue = null) {
  * Automatically stringifies objects/arrays.
  * @param {string} key The setting key.
  * @param {any} value The value to set.
+ * @param {boolean} [skipSync=false] Skip sync to GitHub if true.
  * @returns {Promise<void>}
  */
-async function setSetting(key, value) {
+async function setSetting(key, value, skipSync = false) {
     const valueToStore = (typeof value === 'object' && value !== null)
         ? JSON.stringify(value)
         : String(value); // Ensure it's a string if not object/array
     await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
     
-    // Sync updates to GitHub
-    await syncToGitHub();
+    // Sync updates to GitHub (unless skipped)
+    if (!skipSync) {
+        await syncToGitHub();
+    }
 }
 
 
@@ -283,9 +286,6 @@ async function deleteWorkerKey(apiKey) {
     if (result.changes === 0) {
          throw new Error(`Worker key '${apiKey}' not found for deletion.`);
      }
-     
-     // Sync updates to GitHub
-     await syncToGitHub();
  }
 
 
