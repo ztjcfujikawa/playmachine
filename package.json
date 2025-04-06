@@ -7,9 +7,9 @@
     "start": "node src/index.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "author": "dream_hartley",
+  "license": "Apache-2.0",
+  "description": "A Gemini to OpenAI format proxy supporting multi-apikey rotation. Supports multiple deployment methods.",
   "dependencies": {
     "@octokit/rest": "^20.0.0",
     "cookie-parser": "^1.4.7",
