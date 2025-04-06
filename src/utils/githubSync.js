@@ -31,12 +31,7 @@ class GitHubSync {
     // Delayed sync variables
     this.pendingSync = false;
     this.syncTimer = null;
-    this.syncDelay = 60000; // 1 minute delay
-
-    // Flag to track if an immediate sync is in progress
-    this.isImmediateSyncInProgress = false;
-    // Flag to suppress the next automatic delayed sync after an immediate one
-    this.suppressNextDelayedSync = false;
+    this.syncDelay = 180000; // 3 minute delay
   }
 
   // Check if GitHub sync is configured and enabled
@@ -220,61 +215,12 @@ class GitHubSync {
   }
 
   // Schedule a delayed sync
-  scheduleSync(immediate = false) {
-    // If immediate sync is requested
-    if (immediate) {
-      // Set flag to suppress the next automatic delayed sync potentially triggered by this action
-      this.suppressNextDelayedSync = true;
-      console.log('Immediate sync requested, suppressing next automatic delayed sync.'); // Added log for clarity
-
-      // Clear any pending delayed sync timer
-      if (this.syncTimer) {
-        clearTimeout(this.syncTimer);
-        this.syncTimer = null;
-      }
-      this.pendingSync = false; // Reset pending flag regardless
-
-      // If an immediate sync is already running, don't start another one
-      if (this.isImmediateSyncInProgress) {
-        console.log('Immediate sync already in progress. Skipping.');
-        return Promise.resolve(true); // Indicate success (or no action needed)
-      }
-
-      // Mark immediate sync as in progress
-      this.isImmediateSyncInProgress = true;
-      console.log('Starting immediate GitHub sync...');
-
-      // Perform the upload and ensure the flag is reset afterwards
-      return this.uploadDatabase().finally(() => {
-        this.isImmediateSyncInProgress = false;
-        console.log('Immediate GitHub sync finished.');
-      });
-    }
-
-    // --- Handling for delayed sync requests ---
-
-    // Check if we should suppress this delayed sync call because an immediate sync just happened
-    if (this.suppressNextDelayedSync) {
-      console.log('Suppressing delayed sync call immediately following an immediate sync request.');
-      this.suppressNextDelayedSync = false; // Consume the flag, only suppress once
-      return Promise.resolve(true);
-    }
-
-    // If an immediate sync is currently running, skip scheduling a delayed one
-    // The immediate sync will handle the latest state.
-    if (this.isImmediateSyncInProgress) {
-      console.log('Immediate sync in progress. Skipping delayed schedule request.');
-      // We might still want to mark as pending if changes happened during immediate sync,
-      // but let's keep it simple: the immediate sync covers recent changes.
-      // this.pendingSync = true;
-      return Promise.resolve(true);
-    }
-
+  scheduleSync() {
     // If a delayed sync is already scheduled, just mark as pending (to avoid multiple timers)
     if (this.syncTimer) {
       console.log('Delayed sync already scheduled. Marking as pending.');
       this.pendingSync = true;
-      return Promise.resolve(true);
+      return; // No need to return a promise here, scheduling is synchronous
     }
 
     // Otherwise, schedule a new delayed sync
@@ -282,15 +228,6 @@ class GitHubSync {
     this.pendingSync = true;
 
     this.syncTimer = setTimeout(async () => {
-      // Double-check if an immediate sync started *after* this timer was set
-      // but *before* it executed. If so, let the immediate sync handle it.
-      if (this.isImmediateSyncInProgress) {
-        console.log('Immediate sync started before delayed sync could run. Skipping delayed sync.');
-        this.syncTimer = null; // Clear timer as it's skipped
-        this.pendingSync = false; // Reset pending flag
-        return;
-      }
-
       // Reset flags before starting the upload
       this.pendingSync = false;
       this.syncTimer = null;

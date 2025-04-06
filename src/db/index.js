@@ -79,41 +79,20 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
   }
 });
 
-const SYNC_TIMEOUT = 90000; // Sync timeout in milliseconds (only used for immediate syncs)
-
-// Function to trigger GitHub sync with delay
-async function syncToGitHub(immediate = false) {
+// Function to trigger GitHub sync (now always delayed)
+async function syncToGitHub() {
   if (!githubSync) {
     return false;
   }
 
   try {
-    if (immediate) {
-      // Only use timeout protection for immediate syncs
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('GitHub sync timeout')), SYNC_TIMEOUT);
-      });
-      
-      // Execute immediate sync operation with timeout protection
-      const syncResult = await Promise.race([
-        githubSync.scheduleSync(true),
-        timeoutPromise
-      ]);
-    } else {
-      // For delayed syncs, just schedule and return immediately
-      await githubSync.scheduleSync(false);
-    }
-    
-    return true;
+    // Schedule the delayed sync
+    await githubSync.scheduleSync();
+    return true; // Indicate scheduling was successful
   } catch (err) {
     console.error('Failed to schedule GitHub sync:', err.message);
     return false;
   }
-}
-
-// Immediate sync for critical operations
-async function syncToGitHubImmediate() {
-  return syncToGitHub(true);
 }
 
 // SQL statements to create tables (if they don't exist)
@@ -205,6 +184,5 @@ process.on('SIGTERM', () => {
 // Export the database connection instance and sync functions
 module.exports = {
   db,
-  syncToGitHub,
-  syncToGitHubImmediate
+  syncToGitHub
 };

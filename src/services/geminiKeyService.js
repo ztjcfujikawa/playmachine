@@ -1,4 +1,4 @@
-const { db, syncToGitHub, syncToGitHubImmediate } = require('../db');
+const { db, syncToGitHub } = require('../db');
 const configService = require('./configService'); // Use configService for DB helpers and settings
 const { getTodayInLA } = require('../utils/helpers');
 const crypto = require('crypto'); // For generating key IDs
@@ -42,8 +42,8 @@ async function addGeminiKey(apiKey, name) {
         await configService.setSetting('gemini_key_list', currentList);
         console.log(`Added key ${keyId} to database and rotation list.`);
         
-        // Use immediate sync for adding API key (important operation)
-        await syncToGitHubImmediate();
+        // Sync updates to GitHub
+        await syncToGitHub();
 
         return { id: keyId, name: keyName };
     } catch (err) {
@@ -104,8 +104,8 @@ async function deleteGeminiKey(keyId) {
     }
      console.log(`Deleted Gemini key ${trimmedKeyId} from database.`);
      
-     // Use immediate sync for deleting API key (important operation)
-     await syncToGitHubImmediate();
+     // Sync updates to GitHub
+     await syncToGitHub();
 }
 
 /**

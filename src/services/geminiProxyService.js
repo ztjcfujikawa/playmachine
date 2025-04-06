@@ -1,8 +1,9 @@
 const fetch = require('node-fetch');
+const { syncToGitHub } = require('../db'); // Import the delayed sync function
 const configService = require('./configService');
 const geminiKeyService = require('./geminiKeyService');
 const transformUtils = require('../utils/transform');
-const GitHubSync = require('../utils/githubSync'); // Import GitHubSync class
+// Removed: const GitHubSync = require('../utils/githubSync');
 
 async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
     const requestedModelId = openAIRequestBody?.model;
@@ -155,33 +156,13 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                     console.log(`Attempt ${attempt}: Request successful with key ${selectedKey.id}.`);
                     // Increment usage count (assume this updates DB but doesn't sync every time, or its internal sync is secondary)
                     geminiKeyService.incrementKeyUsage(selectedKey.id, requestedModelId, modelCategory)
-                         .catch(err => console.error(`Error incrementing usage for key ${selectedKey.id} in background:`, err));
+                          .catch(err => console.error(`Error incrementing usage for key ${selectedKey.id} in background:`, err));
 
-                    // 每次调用都触发GitHub同步
-                    console.log(`Chat completions call completed successfully. Triggering GitHub sync.`);
-
-                        // Trigger sync explicitly and run in background
-                        try {
-                            // Get GitHub config
-                            const githubConfig = await configService.getGitHubConfig();
-                            if (githubConfig && githubConfig.repo && githubConfig.token) {
-                                // Create GitHubSync instance with config
-                                const githubSyncInstance = new GitHubSync(
-                                    githubConfig.repo, 
-                                    githubConfig.token,
-                                    githubConfig.dbPath || './database.db',
-                                    githubConfig.encryptKey
-                                );
-                                
-                                // Only upload if properly configured
-                                if (githubSyncInstance.isConfigured()) {
-                                    await githubSyncInstance.uploadDatabase();
-                                }
-                            }
-                        } catch (syncErr) {
-                            console.error('Error during periodic chat completions GitHub sync:', syncErr);
-                        }
-
+                    // Schedule a delayed sync after successful call
+                    console.log(`Chat completions call completed successfully. Scheduling delayed GitHub sync.`);
+                    syncToGitHub().catch(syncErr => { // Call the imported function
+                        console.error('Error scheduling delayed GitHub sync after chat completion:', syncErr);
+                    });
 
                     // Return the successful response object
                     return {

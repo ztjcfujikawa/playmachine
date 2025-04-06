@@ -1,4 +1,4 @@
-const { db, syncToGitHub, syncToGitHubImmediate } = require('../db');
+const { db, syncToGitHub } = require('../db');
 
 // --- Helper Functions for DB Interaction ---
 
@@ -245,8 +245,8 @@ async function addWorkerKey(apiKey, description = '') {
     try {
         await runDb(sql, [apiKey, description, 1]); // Default safety_enabled to true (1)
         
-        // Use immediate sync for adding worker key (important operation)
-        await syncToGitHubImmediate();
+        // Sync updates to GitHub
+        await syncToGitHub();
     } catch (err) {
          if (err.code === 'SQLITE_CONSTRAINT') { // Handle potential unique constraint violation
             throw new Error(`Worker key '${apiKey}' already exists.`);
@@ -284,8 +284,8 @@ async function deleteWorkerKey(apiKey) {
          throw new Error(`Worker key '${apiKey}' not found for deletion.`);
      }
      
-     // Use immediate sync for deleting worker key (important operation)
-     await syncToGitHubImmediate();
+     // Sync updates to GitHub
+     await syncToGitHub();
  }
 
 
