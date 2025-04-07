@@ -972,25 +972,32 @@ function hideError(container = errorMessageDiv) {
             showError(`Invalid API key format detected: ${maskedInvalidKeys.join(', ')}`);
         }
         
-        // Create an array of promises for concurrent execution
-        const addPromises = validKeys.map(key => {
+        // 改为串行处理API密钥添加，避免并发请求导致的问题
+        showLoading();
+        let successCount = 0;
+        
+        // 逐个处理每个API Key
+        for (const key of validKeys) {
             const keyData = {
                 key: key,
                 name: data.name ? data.name.trim() : ''
             };
             
-            return apiFetch('/gemini-keys', {
-                method: 'POST',
-                body: JSON.stringify(keyData),
-            });
-        });
+            try {
+                const result = await apiFetch('/gemini-keys', {
+                    method: 'POST',
+                    body: JSON.stringify(keyData),
+                });
+                
+                if (result && result.success) {
+                    successCount++;
+                }
+            } catch (error) {
+                console.error(`Error adding key ${key}:`, error);
+                // 继续处理下一个密钥
+            }
+        }
         
-        // Execute all requests concurrently
-        showLoading();
-        const results = await Promise.all(addPromises);
-        
-        // Count successes and failures
-        const successCount = results.filter(result => result && result.success).length;
         const failureCount = validKeys.length - successCount;
         
         // Reset form and reload keys

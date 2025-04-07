@@ -32,14 +32,30 @@ async function addGeminiKey(apiKey, name) {
     try {
         await configService.runDb(insertSQL, [keyId, trimmedApiKey, keyName]);
 
-        // Add the key ID to the rotation list in settings
-        const currentList = await configService.getSetting('gemini_key_list', []);
-        if (!Array.isArray(currentList)) {
-             console.warn("Setting 'gemini_key_list' is not an array, resetting.");
-             currentList = [];
+        // 使用事务包装密钥列表更新，防止批量添加时的竞态条件
+        await configService.runDb('BEGIN TRANSACTION');
+        try {
+            // 获取最新的列表
+            const currentList = await configService.getSetting('gemini_key_list', []);
+            
+            if (!Array.isArray(currentList)) {
+                console.warn("Setting 'gemini_key_list' is not an array, resetting.");
+                await configService.setSetting('gemini_key_list', [keyId], true);
+            } else {
+                // 列表存在，添加新ID并保存
+                currentList.push(keyId);
+                await configService.setSetting('gemini_key_list', currentList, true);
+            }
+            
+            // 提交事务
+            await configService.runDb('COMMIT');
+        } catch (error) {
+            // 回滚事务
+            await configService.runDb('ROLLBACK');
+            console.error(`Transaction error while updating gemini_key_list:`, error);
+            throw error;
         }
-        currentList.push(keyId);
-        await configService.setSetting('gemini_key_list', currentList);
+        
         console.log(`Added key ${keyId} to database and rotation list.`);
         
         // Sync updates to GitHub
