@@ -82,46 +82,62 @@ async function deleteGeminiKey(keyId) {
     }
     const trimmedKeyId = keyId.trim();
 
-    // Check if key exists before deleting
-    const keyExists = await configService.getDb('SELECT id FROM gemini_keys WHERE id = ?', [trimmedKeyId]);
-    if (!keyExists) {
-        throw new Error(`Key with ID '${trimmedKeyId}' not found.`);
-    }
-
-    // Delete key info from DB
-    await configService.runDb('DELETE FROM gemini_keys WHERE id = ?', [trimmedKeyId]);
-
-    // Remove key ID from the rotation list
-    const currentList = await configService.getSetting('gemini_key_list', []);
-     if (!Array.isArray(currentList)) {
-         console.warn("Setting 'gemini_key_list' is not an array during delete, resetting index.");
-         await configService.setSetting('gemini_key_index', 0); // Reset index if list was corrupt
-         return; // Can't remove from a non-array list
-     }
-
-    const initialLength = currentList.length;
-    const newList = currentList.filter(id => id !== trimmedKeyId);
-
-    if (newList.length < initialLength) {
-        await configService.setSetting('gemini_key_list', newList);
-        console.log(`Removed key ${trimmedKeyId} from rotation list.`);
-
-        // Adjust index if necessary
-        let currentIndex = await configService.getSetting('gemini_key_index', 0);
-        if (typeof currentIndex !== 'number') currentIndex = 0; // Handle non-numeric index
-
-        if (newList.length === 0) {
-            await configService.setSetting('gemini_key_index', 0); // Reset index if list is empty
-        } else if (currentIndex >= newList.length) {
-            await configService.setSetting('gemini_key_index', 0); // Reset index if it's out of bounds
+    // Use transaction to wrap the entire deletion process to ensure atomicity
+    await configService.runDb('BEGIN TRANSACTION');
+    
+    try {
+        // Check if key exists before deleting
+        const keyExists = await configService.getDb('SELECT id FROM gemini_keys WHERE id = ?', [trimmedKeyId]);
+        if (!keyExists) {
+            await configService.runDb('ROLLBACK');
+            throw new Error(`Key with ID '${trimmedKeyId}' not found.`);
         }
-    } else {
-        console.warn(`Key ID ${trimmedKeyId} was not found in the rotation list.`);
+
+        // Delete key info from DB
+        await configService.runDb('DELETE FROM gemini_keys WHERE id = ?', [trimmedKeyId]);
+
+        // Remove key ID from the rotation list - get the latest list state
+        const currentList = await configService.getSetting('gemini_key_list', []);
+        if (!Array.isArray(currentList)) {
+            console.warn("Setting 'gemini_key_list' is not an array during delete, resetting index.");
+            await configService.setSetting('gemini_key_index', 0, true); // Reset index if list was corrupt
+            await configService.runDb('COMMIT');
+            return; // Can't remove from a non-array list
+        }
+
+        const initialLength = currentList.length;
+        const newList = currentList.filter(id => id !== trimmedKeyId);
+
+        if (newList.length < initialLength) {
+            // Update the list
+            await configService.setSetting('gemini_key_list', newList, true);
+            console.log(`Removed key ${trimmedKeyId} from rotation list.`);
+
+            // Get the latest index state and adjust if needed
+            let currentIndex = await configService.getSetting('gemini_key_index', 0);
+            if (typeof currentIndex !== 'number') currentIndex = 0; // Handle non-numeric index
+
+            if (newList.length === 0) {
+                await configService.setSetting('gemini_key_index', 0, true); // Reset index if list is empty
+            } else if (currentIndex >= newList.length) {
+                await configService.setSetting('gemini_key_index', 0, true); // Reset index if it's out of bounds
+            }
+        } else {
+            console.warn(`Key ID ${trimmedKeyId} was not found in the rotation list.`);
+        }
+        
+        // All operations completed successfully, commit the transaction
+        await configService.runDb('COMMIT');
+        console.log(`Deleted Gemini key ${trimmedKeyId} from database.`);
+        
+        // GitHub sync outside the transaction (doesn't affect atomicity)
+        await syncToGitHub();
+    } catch (error) {
+        // If any error occurs during the process, rollback the transaction
+        await configService.runDb('ROLLBACK');
+        console.error(`Error deleting Gemini key ${trimmedKeyId}:`, error);
+        throw error; // Re-throw the error for upstream handling
     }
-     console.log(`Deleted Gemini key ${trimmedKeyId} from database.`);
-     
-     // Sync updates to GitHub
-     await syncToGitHub();
 }
 
 /**
@@ -288,137 +304,167 @@ async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
             configService.getCategoryQuotas()
         ]);
 
-         if (!Array.isArray(allKeyIds) || allKeyIds.length === 0) {
+        if (!Array.isArray(allKeyIds) || allKeyIds.length === 0) {
             console.error("No Gemini keys configured in settings 'gemini_key_list'");
             return null;
         }
 
-        let currentIndex = (typeof currentIndexSetting === 'number' && currentIndexSetting >= 0) ? currentIndexSetting : 0;
-        if (currentIndex >= allKeyIds.length) {
-            currentIndex = 0; // Reset if index is out of bounds
-        }
-
-        // 2. Determine model category for quota checks
-        let modelCategory = undefined;
-        let modelConfig = undefined;
-        if (requestedModelId) {
-            modelConfig = modelsConfig[requestedModelId];
-            if (modelConfig) {
-                 modelCategory = modelConfig.category;
-            } else {
-                console.warn(`Model ID '${requestedModelId}' not found in config during key selection.`);
-                // Proceed without model-specific quota checks if model unknown
-            }
-        }
-
-        // 3. Iterate through keys using round-robin
-        const todayInLA = getTodayInLA();
+        // Use transaction for index updates to prevent race conditions
         let selectedKeyData = null;
-        let keysChecked = 0;
-        let initialIndex = currentIndex; // To detect full loop
-
-        while (keysChecked < allKeyIds.length) {
-            const keyId = allKeyIds[currentIndex];
-            keysChecked++;
-
-            const keyInfo = await configService.getDb('SELECT * FROM gemini_keys WHERE id = ?', [keyId]);
-
-            // --- Move index update here to ensure it always happens ---
-            const nextIndex = (currentIndex + 1) % allKeyIds.length;
-
-
-            // --- Validation Checks ---
-            if (!keyInfo) {
-                console.warn(`Key ID ${keyId} from list not found in database. Skipping.`);
-                 currentIndex = nextIndex;
-                continue; // Skip this key if its details aren't in the DB
-            }
-
-            // Check for 401/403 error status
-            if (keyInfo.error_status === 401 || keyInfo.error_status === 403) {
-                console.log(`Skipping key ${keyId} due to error status: ${keyInfo.error_status}`);
-                 currentIndex = nextIndex;
-                continue;
-            }
-
-            // Check quota if model category is known and it's the same day
-            let quotaExceeded = false;
-            if (modelCategory && keyInfo.usage_date === todayInLA) {
-                 try {
-                    const modelUsage = JSON.parse(keyInfo.model_usage || '{}');
-                    const categoryUsage = JSON.parse(keyInfo.category_usage || '{}');
-
-                    switch (modelCategory) {
-                        case 'Pro':
-                            if (modelConfig?.individualQuota) { // Check individual first
-                                if ((modelUsage[requestedModelId] || 0) >= modelConfig.individualQuota) {
-                                    console.log(`Skipping key ${keyId}: Pro model '${requestedModelId}' individual quota reached (${modelUsage[requestedModelId] || 0}/${modelConfig.individualQuota}).`);
-                                    quotaExceeded = true;
-                                }
-                            }
-                            if (!quotaExceeded && categoryQuotas.proQuota !== null && (categoryUsage.pro || 0) >= categoryQuotas.proQuota) {
-                                console.log(`Skipping key ${keyId}: Pro category quota reached (${categoryUsage.pro || 0}/${categoryQuotas.proQuota}).`);
-                                quotaExceeded = true;
-                            }
-                            break;
-                        case 'Flash':
-                             if (modelConfig?.individualQuota) { // Check individual first
-                                if ((modelUsage[requestedModelId] || 0) >= modelConfig.individualQuota) {
-                                    console.log(`Skipping key ${keyId}: Flash model '${requestedModelId}' individual quota reached (${modelUsage[requestedModelId] || 0}/${modelConfig.individualQuota}).`);
-                                    quotaExceeded = true;
-                                }
-                            }
-                            if (!quotaExceeded && categoryQuotas.flashQuota !== null && (categoryUsage.flash || 0) >= categoryQuotas.flashQuota) {
-                                console.log(`Skipping key ${keyId}: Flash category quota reached (${categoryUsage.flash || 0}/${categoryQuotas.flashQuota}).`);
-                                quotaExceeded = true;
-                            }
-                            break;
-                        case 'Custom':
-                            if (modelConfig?.dailyQuota !== null && (modelUsage[requestedModelId] || 0) >= modelConfig.dailyQuota) {
-                                console.log(`Skipping key ${keyId}: Custom model '${requestedModelId}' quota reached (${modelUsage[requestedModelId] || 0}/${modelConfig.dailyQuota}).`);
-                                quotaExceeded = true;
-                            }
-                            break;
-                    }
-                 } catch (parseError) {
-                     console.error(`Error parsing usage JSON for key ${keyId}. Skipping quota check. Error:`, parseError);
-                     // Optionally skip the key entirely if parsing fails
-                 }
-            }
-
-            if (quotaExceeded) {
-                 currentIndex = nextIndex;
-                continue; // Skip this key
-            }
-
-            // If we reach here, the key is valid
-            selectedKeyData = { id: keyInfo.id, key: keyInfo.api_key };
-             currentIndex = nextIndex; // Set index for the *next* request
-            break; // Found a valid key
-        } // End while loop
-
-        // --- Post-selection Updates ---
-        if (!selectedKeyData) {
-            console.error("No available Gemini keys found after checking all keys.");
-            return null;
-        }
-
-        // Only update indices if updateIndex is true (for API operations)
-        // Skip for read-only operations like fetching model lists
+        
+        // Start transaction if we're going to update the index
         if (updateIndex) {
-            // Save the next index for the subsequent request
-            // Use Promise.allSettled to avoid unhandled rejections if settings update fails
-            await Promise.allSettled([
-                configService.setSetting('gemini_key_index', currentIndex, true),
-                configService.setSetting('last_used_gemini_key_id', selectedKeyData.id, true)
-            ]);
-            await syncToGitHub();
-            console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyData.id} (next index will be: ${currentIndex})`);
-        } else {
-            console.log(`Selected Gemini Key ID (read-only): ${selectedKeyData.id} (index not updated)`);
+            await configService.runDb('BEGIN TRANSACTION');
         }
-        return selectedKeyData;
+        
+        try {
+            // Get the most current index value within the transaction if updating
+            let currentIndex;
+            if (updateIndex) {
+                const refreshedIndexSetting = await configService.getSetting('gemini_key_index', 0);
+                currentIndex = (typeof refreshedIndexSetting === 'number' && refreshedIndexSetting >= 0) ? 
+                    refreshedIndexSetting : 0;
+            } else {
+                currentIndex = (typeof currentIndexSetting === 'number' && currentIndexSetting >= 0) ? 
+                    currentIndexSetting : 0;
+            }
+            
+            if (currentIndex >= allKeyIds.length) {
+                currentIndex = 0; // Reset if index is out of bounds
+            }
 
+            // 2. Determine model category for quota checks
+            let modelCategory = undefined;
+            let modelConfig = undefined;
+            if (requestedModelId) {
+                modelConfig = modelsConfig[requestedModelId];
+                if (modelConfig) {
+                    modelCategory = modelConfig.category;
+                } else {
+                    console.warn(`Model ID '${requestedModelId}' not found in config during key selection.`);
+                    // Proceed without model-specific quota checks if model unknown
+                }
+            }
+
+            // 3. Iterate through keys using round-robin
+            const todayInLA = getTodayInLA();
+            let keysChecked = 0;
+            let initialIndex = currentIndex; // To detect full loop
+
+            while (keysChecked < allKeyIds.length) {
+                const keyId = allKeyIds[currentIndex];
+                keysChecked++;
+
+                const keyInfo = await configService.getDb('SELECT * FROM gemini_keys WHERE id = ?', [keyId]);
+
+                // --- Move index update here to ensure it always happens ---
+                const nextIndex = (currentIndex + 1) % allKeyIds.length;
+
+                // --- Validation Checks ---
+                if (!keyInfo) {
+                    console.warn(`Key ID ${keyId} from list not found in database. Skipping.`);
+                    currentIndex = nextIndex;
+                    continue; // Skip this key if its details aren't in the DB
+                }
+
+                // Check for 401/403 error status
+                if (keyInfo.error_status === 401 || keyInfo.error_status === 403) {
+                    console.log(`Skipping key ${keyId} due to error status: ${keyInfo.error_status}`);
+                    currentIndex = nextIndex;
+                    continue;
+                }
+
+                // Check quota if model category is known and it's the same day
+                let quotaExceeded = false;
+                if (modelCategory && keyInfo.usage_date === todayInLA) {
+                    try {
+                        const modelUsage = JSON.parse(keyInfo.model_usage || '{}');
+                        const categoryUsage = JSON.parse(keyInfo.category_usage || '{}');
+
+                        switch (modelCategory) {
+                            case 'Pro':
+                                if (modelConfig?.individualQuota) { // Check individual first
+                                    if ((modelUsage[requestedModelId] || 0) >= modelConfig.individualQuota) {
+                                        console.log(`Skipping key ${keyId}: Pro model '${requestedModelId}' individual quota reached (${modelUsage[requestedModelId] || 0}/${modelConfig.individualQuota}).`);
+                                        quotaExceeded = true;
+                                    }
+                                }
+                                if (!quotaExceeded && categoryQuotas.proQuota !== null && (categoryUsage.pro || 0) >= categoryQuotas.proQuota) {
+                                    console.log(`Skipping key ${keyId}: Pro category quota reached (${categoryUsage.pro || 0}/${categoryQuotas.proQuota}).`);
+                                    quotaExceeded = true;
+                                }
+                                break;
+                            case 'Flash':
+                                if (modelConfig?.individualQuota) { // Check individual first
+                                    if ((modelUsage[requestedModelId] || 0) >= modelConfig.individualQuota) {
+                                        console.log(`Skipping key ${keyId}: Flash model '${requestedModelId}' individual quota reached (${modelUsage[requestedModelId] || 0}/${modelConfig.individualQuota}).`);
+                                        quotaExceeded = true;
+                                    }
+                                }
+                                if (!quotaExceeded && categoryQuotas.flashQuota !== null && (categoryUsage.flash || 0) >= categoryQuotas.flashQuota) {
+                                    console.log(`Skipping key ${keyId}: Flash category quota reached (${categoryUsage.flash || 0}/${categoryQuotas.flashQuota}).`);
+                                    quotaExceeded = true;
+                                }
+                                break;
+                            case 'Custom':
+                                if (modelConfig?.dailyQuota !== null && (modelUsage[requestedModelId] || 0) >= modelConfig.dailyQuota) {
+                                    console.log(`Skipping key ${keyId}: Custom model '${requestedModelId}' quota reached (${modelUsage[requestedModelId] || 0}/${modelConfig.dailyQuota}).`);
+                                    quotaExceeded = true;
+                                }
+                                break;
+                        }
+                    } catch (parseError) {
+                        console.error(`Error parsing usage JSON for key ${keyId}. Skipping quota check. Error:`, parseError);
+                        // Optionally skip the key entirely if parsing fails
+                    }
+                }
+
+                if (quotaExceeded) {
+                    currentIndex = nextIndex;
+                    continue; // Skip this key
+                }
+
+                // If we reach here, the key is valid
+                selectedKeyData = { id: keyInfo.id, key: keyInfo.api_key };
+                currentIndex = nextIndex; // Set index for the *next* request
+                break; // Found a valid key
+            } // End while loop
+
+            // --- Post-selection Updates ---
+            if (!selectedKeyData) {
+                if (updateIndex) {
+                    await configService.runDb('ROLLBACK'); // Rollback if no key found
+                }
+                console.error("No available Gemini keys found after checking all keys.");
+                return null;
+            }
+
+            // Only update indices if updateIndex is true (for API operations)
+            // Skip for read-only operations like fetching model lists
+            if (updateIndex) {
+                // Save the next index for the subsequent request within the transaction
+                await configService.setSetting('gemini_key_index', currentIndex, true);
+                await configService.setSetting('last_used_gemini_key_id', selectedKeyData.id, true);
+                
+                // Commit the transaction
+                await configService.runDb('COMMIT');
+                
+                // GitHub sync outside transaction
+                await syncToGitHub();
+                console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyData.id} (next index will be: ${currentIndex})`);
+            } else {
+                console.log(`Selected Gemini Key ID (read-only): ${selectedKeyData.id} (index not updated)`);
+            }
+            
+            return selectedKeyData;
+            
+        } catch (error) {
+            // If any error occurs and we're in a transaction, rollback
+            if (updateIndex) {
+                await configService.runDb('ROLLBACK');
+            }
+            throw error; // Re-throw to be caught by outer try/catch
+        }
     } catch (error) {
         console.error("Error retrieving or processing Gemini keys:", error);
         return null;
