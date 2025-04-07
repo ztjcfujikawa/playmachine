@@ -4,6 +4,15 @@ const configService = require('./configService');
 const geminiKeyService = require('./geminiKeyService');
 const transformUtils = require('../utils/transform');
 
+// Base Gemini API URL
+const BASE_GEMINI_URL = 'https://generativelanguage.googleapis.com';
+// Cloudflare Gateway base path
+const CF_GATEWAY_BASE = 'https://gateway.ai.cloudflare.com/v1';
+// Project ID regex pattern - 32 character hex string
+const PROJECT_ID_REGEX = /^[0-9a-f]{32}$/i;
+// Default Cloudflare Gateway project ID
+const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
+
 async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
     const requestedModelId = openAIRequestBody?.model;
 
@@ -93,10 +102,42 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
 
                 // 4. Prepare and Send Request to Gemini
                 const apiAction = stream ? 'streamGenerateContent' : 'generateContent';
-                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}?key=${selectedKey.key}`;
+                
+                // Build base URL based on CF_GATEWAY environment variable
+                let baseUrl = BASE_GEMINI_URL;
+                const cfGateway = process.env.CF_GATEWAY;
+                
+                // If CF_GATEWAY is set
+                if (cfGateway) {
+                    if (cfGateway === '1') {
+                        // Validate default project ID format
+                        if (PROJECT_ID_REGEX.test(DEFAULT_PROJECT_ID)) {
+                            // Only use default Cloudflare Gateway if project ID format is valid
+                            baseUrl = `${CF_GATEWAY_BASE}/${DEFAULT_PROJECT_ID}/gemini/google-ai-studio`;
+                        }
+                        // If invalid, fall back to default Gemini API URL
+                    } else if (cfGateway.includes('/')) {
+                        // Parse custom format "projectId/gatewayName"
+                        const parts = cfGateway.split('/');
+                        const projectId = parts[0];
+                        const gatewayName = parts[1];
+                        
+                        // Only use custom Cloudflare Gateway if project ID format is valid
+                        if (projectId && gatewayName && PROJECT_ID_REGEX.test(projectId)) {
+                            baseUrl = `${CF_GATEWAY_BASE}/${projectId}/${gatewayName}/google-ai-studio`;
+                        }
+                        // If invalid, fall back to default Gemini API URL
+                    }
+                    // For any other value of CF_GATEWAY, keep using default Gemini API URL
+                }
+                
+                // Build complete API URL
+                const geminiUrl = `${baseUrl}/v1beta/models/${requestedModelId}:${apiAction}`;
+                
                 const geminiRequestHeaders = {
                     'Content-Type': 'application/json',
                     'User-Agent': `gemini-proxy-panel-node/1.0`,
+                    'x-goog-api-key': selectedKey.key
                 };
 
                 console.log(`Attempt ${attempt}: Sending ${stream ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);
