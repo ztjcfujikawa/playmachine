@@ -90,17 +90,40 @@ async function getSetting(key, defaultValue = null) {
  * @param {string} key The setting key.
  * @param {any} value The value to set.
  * @param {boolean} [skipSync=false] Skip sync to GitHub if true.
+ * @param {boolean} [useTransaction=false] Whether this call is part of an existing transaction.
  * @returns {Promise<void>}
  */
-async function setSetting(key, value, skipSync = false) {
+async function setSetting(key, value, skipSync = false, useTransaction = false) {
+    // Convert value to string for storage
     const valueToStore = (typeof value === 'object' && value !== null)
         ? JSON.stringify(value)
         : String(value); // Ensure it's a string if not object/array
-    await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
     
-    // Sync updates to GitHub (unless skipped)
-    if (!skipSync) {
-        await syncToGitHub();
+    // If not part of an existing transaction, start a new one
+    if (!useTransaction) {
+        await runDb('BEGIN TRANSACTION');
+    }
+    
+    try {
+        // Update or insert the setting
+        await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
+        
+        // If we started a transaction, commit it
+        if (!useTransaction) {
+            await runDb('COMMIT');
+            
+            // Sync updates to GitHub (unless skipped)
+            if (!skipSync) {
+                await syncToGitHub();
+            }
+        }
+    } catch (error) {
+        // If we started a transaction and an error occurred, roll it back
+        if (!useTransaction) {
+            await runDb('ROLLBACK');
+        }
+        // Re-throw the error to be handled by the caller
+        throw error;
     }
 }
 
@@ -134,11 +157,6 @@ async function getModelsConfig() {
  * @returns {Promise<void>}
  */
 async function setModelConfig(modelId, category, dailyQuota, individualQuota) {
-    const sql = `
-        INSERT OR REPLACE INTO models_config
-        (model_id, category, daily_quota, individual_quota)
-        VALUES (?, ?, ?, ?)
-    `;
     // Ensure null is stored in DB if quota is undefined or explicitly null
     const dailyQuotaDb = (dailyQuota === undefined || dailyQuota === null) ? null : Number(dailyQuota);
     const individualQuotaDb = (individualQuota === undefined || individualQuota === null) ? null : Number(individualQuota);
@@ -146,15 +164,31 @@ async function setModelConfig(modelId, category, dailyQuota, individualQuota) {
     if ((category === 'Custom' && dailyQuotaDb !== null && !Number.isInteger(dailyQuotaDb)) || dailyQuotaDb < 0) {
         throw new Error("Custom model dailyQuota must be a non-negative integer or null.");
     }
-     if (( (category === 'Pro' || category === 'Flash') && individualQuotaDb !== null && !Number.isInteger(individualQuotaDb)) || individualQuotaDb < 0) {
+    if (((category === 'Pro' || category === 'Flash') && individualQuotaDb !== null && !Number.isInteger(individualQuotaDb)) || individualQuotaDb < 0) {
         throw new Error("Pro/Flash model individualQuota must be a non-negative integer or null.");
     }
 
-
-    await runDb(sql, [modelId, category, dailyQuotaDb, individualQuotaDb]);
+    await runDb('BEGIN TRANSACTION');
     
-    // Sync updates to GitHub
-    await syncToGitHub();
+    try {
+        const sql = `
+            INSERT OR REPLACE INTO models_config
+            (model_id, category, daily_quota, individual_quota)
+            VALUES (?, ?, ?, ?)
+        `;
+        
+        await runDb(sql, [modelId, category, dailyQuotaDb, individualQuotaDb]);
+        
+        // Commit the transaction
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub (outside transaction)
+        await syncToGitHub();
+    } catch (error) {
+        // Rollback on error
+        await runDb('ROLLBACK');
+        throw error;
+    }
 }
 
 /**
@@ -163,13 +197,24 @@ async function setModelConfig(modelId, category, dailyQuota, individualQuota) {
  * @returns {Promise<void>}
  */
 async function deleteModelConfig(modelId) {
-    const result = await runDb('DELETE FROM models_config WHERE model_id = ?', [modelId]);
-     if (result.changes === 0) {
-        throw new Error(`Model '${modelId}' not found for deletion.`);
-    }
+    await runDb('BEGIN TRANSACTION');
     
-    // Sync updates to GitHub
-    await syncToGitHub();
+    try {
+        const result = await runDb('DELETE FROM models_config WHERE model_id = ?', [modelId]);
+        
+        if (result.changes === 0) {
+            await runDb('ROLLBACK');
+            throw new Error(`Model '${modelId}' not found for deletion.`);
+        }
+        
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub (outside transaction)
+        await syncToGitHub();
+    } catch (error) {
+        await runDb('ROLLBACK');
+        throw error;
+    }
 }
 
 
@@ -199,10 +244,29 @@ async function setCategoryQuotas(proQuota, flashQuota) {
     if (typeof proQuota !== 'number' || typeof flashQuota !== 'number' || proQuota < 0 || flashQuota < 0) {
         throw new Error("Quotas must be non-negative numbers.");
     }
-    await setSetting('category_quotas', {
-        proQuota: Math.floor(proQuota),
-        flashQuota: Math.floor(flashQuota)
-    });
+
+    await runDb('BEGIN TRANSACTION');
+    
+    try {
+        // Save directly with SQL to avoid nested transactions
+        const quotasObj = {
+            proQuota: Math.floor(proQuota),
+            flashQuota: Math.floor(flashQuota)
+        };
+        
+        await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 
+            ['category_quotas', JSON.stringify(quotasObj)]);
+        
+        // Commit the transaction
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub outside transaction
+        await syncToGitHub();
+    } catch (error) {
+        // Rollback on error
+        await runDb('ROLLBACK');
+        throw error;
+    }
 }
 
 
@@ -241,17 +305,26 @@ async function getWorkerKeySafetySetting(apiKey) {
  * @returns {Promise<void>}
  */
 async function addWorkerKey(apiKey, description = '') {
-    const sql = `
-        INSERT INTO worker_keys (api_key, description, safety_enabled, created_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    `;
+    await runDb('BEGIN TRANSACTION');
+    
     try {
+        const sql = `
+            INSERT INTO worker_keys (api_key, description, safety_enabled, created_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        `;
+        
         await runDb(sql, [apiKey, description, 1]); // Default safety_enabled to true (1)
         
-        // Sync updates to GitHub
+        // Commit transaction
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub (outside transaction)
         await syncToGitHub();
     } catch (err) {
-         if (err.code === 'SQLITE_CONSTRAINT') { // Handle potential unique constraint violation
+        // Rollback on error
+        await runDb('ROLLBACK');
+        
+        if (err.code === 'SQLITE_CONSTRAINT') { // Handle potential unique constraint violation
             throw new Error(`Worker key '${apiKey}' already exists.`);
         }
         throw err; // Re-throw other errors
@@ -265,14 +338,25 @@ async function addWorkerKey(apiKey, description = '') {
  * @returns {Promise<void>}
  */
 async function updateWorkerKeySafety(apiKey, safetyEnabled) {
-     const sql = `UPDATE worker_keys SET safety_enabled = ? WHERE api_key = ?`;
-     const result = await runDb(sql, [safetyEnabled ? 1 : 0, apiKey]);
-     if (result.changes === 0) {
-          throw new Error(`Worker key '${apiKey}' not found for updating safety settings.`);
-     }
-     
-     // Sync updates to GitHub
-     await syncToGitHub();
+    await runDb('BEGIN TRANSACTION');
+    
+    try {
+        const sql = `UPDATE worker_keys SET safety_enabled = ? WHERE api_key = ?`;
+        const result = await runDb(sql, [safetyEnabled ? 1 : 0, apiKey]);
+        
+        if (result.changes === 0) {
+            await runDb('ROLLBACK');
+            throw new Error(`Worker key '${apiKey}' not found for updating safety settings.`);
+        }
+        
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub (outside transaction)
+        await syncToGitHub();
+    } catch (error) {
+        await runDb('ROLLBACK');
+        throw error;
+    }
 }
 
 
@@ -282,11 +366,25 @@ async function updateWorkerKeySafety(apiKey, safetyEnabled) {
  * @returns {Promise<void>}
  */
 async function deleteWorkerKey(apiKey) {
-    const result = await runDb('DELETE FROM worker_keys WHERE api_key = ?', [apiKey]);
-    if (result.changes === 0) {
-         throw new Error(`Worker key '${apiKey}' not found for deletion.`);
-     }
- }
+    await runDb('BEGIN TRANSACTION');
+    
+    try {
+        const result = await runDb('DELETE FROM worker_keys WHERE api_key = ?', [apiKey]);
+        
+        if (result.changes === 0) {
+            await runDb('ROLLBACK');
+            throw new Error(`Worker key '${apiKey}' not found for deletion.`);
+        }
+        
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub (outside transaction)
+        await syncToGitHub();
+    } catch (error) {
+        await runDb('ROLLBACK');
+        throw error;
+    }
+}
 
 
 // --- GitHub Configuration ---
@@ -308,7 +406,25 @@ async function getGitHubConfig() {
  * @returns {Promise<void>}
  */
 async function setGitHubConfig(repo, token, dbPath = './database.db', encryptKey = null) {
-    await setSetting('github_config', { repo, token, dbPath, encryptKey });
+    await runDb('BEGIN TRANSACTION');
+    
+    try {
+        // Save directly with SQL to avoid nested transactions
+        const configObj = { repo, token, dbPath, encryptKey };
+        
+        await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', 
+            ['github_config', JSON.stringify(configObj)]);
+        
+        // Commit the transaction
+        await runDb('COMMIT');
+        
+        // Sync updates to GitHub outside transaction
+        await syncToGitHub();
+    } catch (error) {
+        // Rollback on error
+        await runDb('ROLLBACK');
+        throw error;
+    }
 }
 
 
