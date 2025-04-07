@@ -225,7 +225,6 @@ router.delete('/worker-keys/:key', async (req, res, next) => { // Use key in pat
              return res.status(400).json({ error: 'Missing worker key in path' });
          }
         await configService.deleteWorkerKey(keyToDelete);
-        await syncToGitHub();
         res.json({ success: true, key: keyToDelete });
     } catch (error) {
          if (error.message.includes('not found')) {
