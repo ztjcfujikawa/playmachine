@@ -896,13 +896,25 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 									clearTimeout(keepAliveTimer);
 									console.log("Keepalive timer cleared.");
 
-									// Send the final OpenAI chunks
-									controller.enqueue(encodeOpenAiResponseChunk('role', requestedModelId!, { role: 'assistant' }));
-									controller.enqueue(encodeOpenAiResponseChunk('content', requestedModelId!, {
-										content: finalMessage?.content,
-										tool_calls: finalMessage?.tool_calls
-									}));
-									controller.enqueue(encodeOpenAiResponseChunk('finish', requestedModelId!, { finish_reason: finalFinishReason }));
+									// Send a complete response in one chunk instead of multiple chunks
+									// Create a single OpenAI response chunk with all data
+									const encoder = new TextEncoder();
+									const completeResponseChunk = {
+										id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+										object: "chat.completion.chunk",
+										created: Math.floor(Date.now() / 1000),
+										model: requestedModelId!,
+										choices: [{
+											index: 0,
+											delta: {
+												role: 'assistant',
+												content: finalMessage?.content,
+												...(finalMessage?.tool_calls ? { tool_calls: finalMessage.tool_calls } : {})
+											},
+											finish_reason: finalFinishReason || "stop"
+										}]
+									};
+									controller.enqueue(encoder.encode(`data: ${JSON.stringify(completeResponseChunk)}\n\n`));
 
 									// Send DONE signal
 									controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));

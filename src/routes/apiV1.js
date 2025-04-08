@@ -320,42 +320,52 @@ router.post('/chat/completions', async (req, res, next) => {
                     }]
                 };
 
-                // Send the complete response after a slight delay (ensure the client received the first keepalive)
-                setTimeout(() => {
-                    try {
-                        // Clear the keepalive timer
-                        clearInterval(keepAliveInterval);
+                // Send the complete response immediately without delay or chunking
+                try {
+                    // Clear the keepalive timer
+                    clearInterval(keepAliveInterval);
 
-                        // Send role, content, and completion blocks in order
-                        keepAliveStream.push(`data: ${JSON.stringify(roleChunk)}\n\n`);
-                        keepAliveStream.push(`data: ${JSON.stringify(contentChunk)}\n\n`);
-                        keepAliveStream.push(`data: ${JSON.stringify(finishChunk)}\n\n`);
+                    // Create a single complete response object instead of multiple chunks
+                    const completeResponseChunk = {
+                        id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: requestedModelId,
+                        choices: [{
+                            index: 0,
+                            delta: { 
+                                role: "assistant",
+                                content: content 
+                            },
+                            finish_reason: openAIResponse.choices[0].finish_reason || "stop"
+                        }]
+                    };
 
-                        // End the stream
-                        keepAliveStream.push('data: [DONE]\n\n');
-                        keepAliveStream.push(null);
-                    } catch (error) {
-                        // Clear the timer on error
-                        clearInterval(keepAliveInterval);
+                    // Send the complete response and end marker at once
+                    keepAliveStream.push(`data: ${JSON.stringify(completeResponseChunk)}\n\n`);
+                    keepAliveStream.push('data: [DONE]\n\n');
+                    keepAliveStream.push(null);
+                } catch (error) {
+                    // Clear the timer on error
+                    clearInterval(keepAliveInterval);
 
-                        // Send error message
-                        console.error("Error processing Gemini response in KEEPALIVE mode:", error);
-                        const errorResponse = {
-                            id: "error",
-                            object: "chat.completion.chunk",
-                            created: Math.floor(Date.now() / 1000),
-                            model: requestedModelId,
-                            choices: [{
-                                index: 0,
-                                delta: { content: `Error: ${error.message}` },
-                                finish_reason: "stop"
-                            }]
-                        };
-                        keepAliveStream.push(`data: ${JSON.stringify(errorResponse)}\n\n`);
-                        keepAliveStream.push('data: [DONE]\n\n');
-                        keepAliveStream.push(null);
-                    }
-                }, 1000); // Delay 1 second to ensure the first keepalive has been sent
+                    // Send error message
+                    console.error("Error processing Gemini response in KEEPALIVE mode:", error);
+                    const errorResponse = {
+                        id: "error",
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: requestedModelId,
+                        choices: [{
+                            index: 0,
+                            delta: { content: `Error: ${error.message}` },
+                            finish_reason: "stop"
+                        }]
+                    };
+                    keepAliveStream.push(`data: ${JSON.stringify(errorResponse)}\n\n`);
+                    keepAliveStream.push('data: [DONE]\n\n');
+                    keepAliveStream.push(null);
+                }
 
                 // Pipe keepAliveStream to the response
                 keepAliveStream.pipe(res);
