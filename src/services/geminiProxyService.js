@@ -105,10 +105,13 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                 
                 // Build base URL based on CF_GATEWAY environment variable
                 let baseUrl = BASE_GEMINI_URL;
-                const cfGateway = process.env.CF_GATEWAY;
+                let cfGateway = process.env.CF_GATEWAY;
                 
-                // If CF_GATEWAY is set
-                if (cfGateway) {
+                // Return default URL if CF_GATEWAY is not set
+                if (!cfGateway) {
+                    // Use default Gemini API URL
+                } else {
+                    // Handle case 1: CF_GATEWAY = "1" (use default project ID)
                     if (cfGateway === '1') {
                         // Validate default project ID format
                         if (PROJECT_ID_REGEX.test(DEFAULT_PROJECT_ID)) {
@@ -116,17 +119,29 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                             baseUrl = `${CF_GATEWAY_BASE}/${DEFAULT_PROJECT_ID}/gemini/google-ai-studio`;
                         }
                         // If invalid, fall back to default Gemini API URL
-                    } else if (cfGateway.includes('/')) {
-                        // Parse custom format "projectId/gatewayName"
-                        const parts = cfGateway.split('/');
-                        const projectId = parts[0];
-                        const gatewayName = parts[1];
-                        
-                        // Only use custom Cloudflare Gateway if project ID format is valid
-                        if (projectId && gatewayName && PROJECT_ID_REGEX.test(projectId)) {
-                            baseUrl = `${CF_GATEWAY_BASE}/${projectId}/${gatewayName}/google-ai-studio`;
+                    } else {
+                        // Extract projectId/gatewayName from any string that contains it
+                        try {
+                            // Remove trailing slashes
+                            cfGateway = cfGateway.replace(/\/+$/, '');
+                            
+                            // Try to extract projectId/gatewayName pattern from anywhere in the string
+                            // This will work for both full URLs and direct format strings
+                            const pattern = /([0-9a-f]{32})\/([^\/\s]+)/i;
+                            const matches = cfGateway.match(pattern);
+                            
+                            if (matches && matches.length >= 3) {
+                                const projectId = matches[1];
+                                const gatewayName = matches[2];
+                                
+                                if (PROJECT_ID_REGEX.test(projectId)) {
+                                    baseUrl = `${CF_GATEWAY_BASE}/${projectId}/${gatewayName}/google-ai-studio`;
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Error parsing CF_GATEWAY value:', error);
+                            // Fall back to default URL on error
                         }
-                        // If invalid, fall back to default Gemini API URL
                     }
                     // For any other value of CF_GATEWAY, keep using default Gemini API URL
                 }
