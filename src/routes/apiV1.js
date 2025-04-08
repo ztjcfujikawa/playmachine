@@ -204,12 +204,112 @@ router.post('/chat/completions', async (req, res, next) => {
             function processGeminiObject(geminiObj, stream) {
                 if (!geminiObj) return;
                 
-                // If it's a valid Gemini response object (contains candidates)
+                // Handle keepalive heartbeat message
+                if (geminiObj.keepalive === true) {
+                    // Send an empty delta message as a heartbeat
+                    const keepAliveData = {
+                        id: "keepalive",
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: requestedModelId,
+                        choices: [{
+                            index: 0,
+                            delta: {},
+                            finish_reason: null
+                        }]
+                    };
+                    stream.push(`data: ${JSON.stringify(keepAliveData)}\n\n`);
+                    return;
+                }
+                
+                // Handle possible error messages
+                if (geminiObj.error) {
+                    const errorChunk = {
+                        id: "error",
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: requestedModelId,
+                        choices: [{
+                            index: 0,
+                            delta: { content: `Error: ${geminiObj.error}` },
+                            finish_reason: "stop"
+                        }]
+                    };
+                    stream.push(`data: ${JSON.stringify(errorChunk)}\n\n`);
+                    return;
+                }
+                
+                // If it's a valid Gemini response object (contains candidates) - standard stream or full response
                 if (geminiObj.candidates && geminiObj.candidates.length > 0) {
-                    // Convert and send directly
-                    const openaiChunkStr = transformUtils.transformGeminiStreamChunk(geminiObj, requestedModelId);
-                    if (openaiChunkStr) {
-                        stream.push(openaiChunkStr);
+                    // Check if it's a complete non-streaming response (contains usageMetadata)
+                    if (geminiObj.usageMetadata) {
+                        // This is a complete non-streaming response, usually from keepalive mode
+                        // First, send the role information
+                        const roleChunk = {
+                            id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                            object: "chat.completion.chunk",
+                            created: Math.floor(Date.now() / 1000),
+                            model: requestedModelId,
+                            choices: [{
+                                index: 0,
+                                delta: { role: "assistant" },
+                                finish_reason: null
+                            }]
+                        };
+                        stream.push(`data: ${JSON.stringify(roleChunk)}\n\n`);
+                        
+                        // Extract content
+                        let content = "";
+                        if (geminiObj.candidates[0].content && 
+                            geminiObj.candidates[0].content.parts && 
+                            geminiObj.candidates[0].content.parts.length > 0) {
+                            
+                            content = geminiObj.candidates[0].content.parts
+                                .filter(part => part.text)
+                                .map(part => part.text)
+                                .join("");
+                        }
+                        
+                        if (content) {
+                            // Send the complete content at once (no longer chunked) to improve response speed
+                            const contentChunk = {
+                                id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                                object: "chat.completion.chunk",
+                                created: Math.floor(Date.now() / 1000),
+                                model: requestedModelId,
+                                choices: [{
+                                    index: 0,
+                                    delta: { content: content },
+                                    finish_reason: null
+                                }]
+                            };
+                            stream.push(`data: ${JSON.stringify(contentChunk)}\n\n`);
+                        }
+                        
+                        // Send completion information
+                        const finishReason = geminiObj.candidates[0].finishReason === "STOP" ? "stop" : 
+                                            geminiObj.candidates[0].finishReason === "MAX_TOKENS" ? "length" :
+                                            geminiObj.candidates[0].finishReason === "SAFETY" ? "content_filter" :
+                                            null;
+                                            
+                        const finishChunk = {
+                            id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                            object: "chat.completion.chunk",
+                            created: Math.floor(Date.now() / 1000),
+                            model: requestedModelId,
+                            choices: [{
+                                index: 0,
+                                delta: {},
+                                finish_reason: finishReason
+                            }]
+                        };
+                        stream.push(`data: ${JSON.stringify(finishChunk)}\n\n`);
+                    } else {
+                        // Standard streaming response chunk
+                        const openaiChunkStr = transformUtils.transformGeminiStreamChunk(geminiObj, requestedModelId);
+                        if (openaiChunkStr) {
+                            stream.push(openaiChunkStr);
+                        }
                     }
                 } else if (Array.isArray(geminiObj)) {
                     // If it's an array, process each element
@@ -235,7 +335,8 @@ router.post('/chat/completions', async (req, res, next) => {
                 // May need to handle other response types...
             }
 
-            // Pipe the Gemini response body through the transformer and then to the client response
+            // All streaming responses are processed through the transformer
+            console.log(`Piping response through transformer (keepalive mode: ${result.isKeepalive ? 'true' : 'false'})`);
             geminiResponse.body.pipe(streamTransformer).pipe(res);
 
             // Handle errors on the source stream
