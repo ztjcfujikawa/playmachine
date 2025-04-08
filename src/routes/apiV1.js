@@ -71,14 +71,17 @@ router.post('/chat/completions', async (req, res, next) => {
             // res.setHeader('Access-Control-Allow-Origin', '*'); // Example if needed
 
 
-            // Ensure geminiResponse.body is a readable stream
-            if (!geminiResponse.body || typeof geminiResponse.body.pipe !== 'function') {
-                console.error('Gemini response body is not a readable stream for streaming request.');
-                 // Send a valid SSE error event before closing
-                 const errorPayload = JSON.stringify({ error: { message: 'Upstream response body is not readable.', type: 'proxy_error' } });
-                 res.write(`data: ${errorPayload}\n\n`);
-                 res.write('data: [DONE]\n\n');
-                return res.end();
+            // Check in advance if it's keepalive mode, if so, no need to check the body stream
+            if (!result.isKeepAlive) {
+                // Only check if geminiResponse.body is a readable stream in non-keepalive mode
+                if (!geminiResponse.body || typeof geminiResponse.body.pipe !== 'function') {
+                    console.error('Gemini response body is not a readable stream for streaming request.');
+                    // Send a valid SSE error event before closing
+                    const errorPayload = JSON.stringify({ error: { message: 'Upstream response body is not readable.', type: 'proxy_error' } });
+                    res.write(`data: ${errorPayload}\n\n`);
+                    res.write('data: [DONE]\n\n');
+                    return res.end();
+                }
             }
 
             const decoder = new TextDecoder();
@@ -235,31 +238,158 @@ router.post('/chat/completions', async (req, res, next) => {
                 // May need to handle other response types...
             }
 
-            // Pipe the Gemini response body through the transformer and then to the client response
-            geminiResponse.body.pipe(streamTransformer).pipe(res);
+            // Check if this is a keepalive special response or normal streaming
+            if (result.isKeepAlive) { // Flag set by keepalive mode (non-streaming converted to streaming)
+                const geminiResponseData = result.response; // Directly get the parsed JSON data
+                const requestedModelId = result.requestedModelId;
 
-            // Handle errors on the source stream
-             geminiResponse.body.on('error', (err) => {
-                 console.error('Error reading stream from Gemini:', err);
-                 // Try to end the response gracefully if headers not sent
-                 if (!res.headersSent) {
-                     res.status(500).json({ error: { message: 'Error reading stream from upstream API.' } });
-                 } else {
-                      // If headers sent, try to signal error within the stream (though might be too late)
-                      // streamTransformer should ideally handle errors during transformation
-                      res.end(); // End the connection
-                 }
-             });
+                console.log(`Processing KEEPALIVE mode response`);
 
-             // Handle errors on the transformer stream
-             streamTransformer.on('error', (err) => {
-                 console.error('Error in stream transformer:', err);
-                 if (!res.headersSent) {
-                      res.status(500).json({ error: { message: 'Error processing stream data.' } });
-                 } else {
-                      res.end();
-                 }
-             });
+                // Create a Node.js Readable stream to send to the client
+                const keepAliveStream = new Readable({
+                    read() {} // Required empty read method
+                });
+
+                // Function to send keepalive messages
+                const sendKeepAlive = () => {
+                    const keepAliveData = {
+                        id: "keepalive",
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: requestedModelId,
+                        choices: [{
+                            index: 0,
+                            delta: {},
+                            finish_reason: null
+                        }]
+                    };
+
+                    // Send empty delta as keepalive signal
+                    keepAliveStream.push(`data: ${JSON.stringify(keepAliveData)}\n\n`);
+                };
+
+                // Start sending keepalive messages
+                const keepAliveInterval = setInterval(sendKeepAlive, 5000);
+
+                // Send the first keepalive immediately
+                sendKeepAlive();
+
+                // Convert to OpenAI format
+                const openAIResponse = JSON.parse(transformUtils.transformGeminiResponseToOpenAI(
+                    geminiResponseData, 
+                    requestedModelId
+                ));
+
+                // Get the complete response content
+                const content = openAIResponse.choices[0].message.content || "";
+
+                // Create role information and complete content block
+                const roleChunk = {
+                    id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: requestedModelId,
+                    choices: [{
+                        index: 0,
+                        delta: { role: "assistant" },
+                        finish_reason: null
+                    }]
+                };
+                
+                const contentChunk = {
+                    id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: requestedModelId,
+                    choices: [{
+                        index: 0,
+                        delta: { content: content },
+                        finish_reason: null
+                    }]
+                };
+                
+                const finishChunk = {
+                    id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: requestedModelId,
+                    choices: [{
+                        index: 0,
+                        delta: {},
+                        finish_reason: openAIResponse.choices[0].finish_reason || "stop"
+                    }]
+                };
+
+                // Send the complete response after a slight delay (ensure the client received the first keepalive)
+                setTimeout(() => {
+                    try {
+                        // Clear the keepalive timer
+                        clearInterval(keepAliveInterval);
+
+                        // Send role, content, and completion blocks in order
+                        keepAliveStream.push(`data: ${JSON.stringify(roleChunk)}\n\n`);
+                        keepAliveStream.push(`data: ${JSON.stringify(contentChunk)}\n\n`);
+                        keepAliveStream.push(`data: ${JSON.stringify(finishChunk)}\n\n`);
+
+                        // End the stream
+                        keepAliveStream.push('data: [DONE]\n\n');
+                        keepAliveStream.push(null);
+                    } catch (error) {
+                        // Clear the timer on error
+                        clearInterval(keepAliveInterval);
+
+                        // Send error message
+                        console.error("Error processing Gemini response in KEEPALIVE mode:", error);
+                        const errorResponse = {
+                            id: "error",
+                            object: "chat.completion.chunk",
+                            created: Math.floor(Date.now() / 1000),
+                            model: requestedModelId,
+                            choices: [{
+                                index: 0,
+                                delta: { content: `Error: ${error.message}` },
+                                finish_reason: "stop"
+                            }]
+                        };
+                        keepAliveStream.push(`data: ${JSON.stringify(errorResponse)}\n\n`);
+                        keepAliveStream.push('data: [DONE]\n\n');
+                        keepAliveStream.push(null);
+                    }
+                }, 1000); // Delay 1 second to ensure the first keepalive has been sent
+
+                // Pipe keepAliveStream to the response
+                keepAliveStream.pipe(res);
+            } else {
+                // Standard Gemini stream response is still processed by the transformer
+                geminiResponse.body.pipe(streamTransformer).pipe(res);
+            }
+
+            // Register error handling - only needed in non-keepalive mode
+            if (!result.isKeepAlive) {
+                // Only register these error handlers in standard streaming mode
+                // Handle errors on the source stream
+                geminiResponse.body.on('error', (err) => {
+                    console.error('Error reading stream from Gemini:', err);
+                    // Try to end the response gracefully if headers not sent
+                    if (!res.headersSent) {
+                        res.status(500).json({ error: { message: 'Error reading stream from upstream API.' } });
+                    } else {
+                        // If headers sent, try to signal error within the stream (though might be too late)
+                        // streamTransformer should ideally handle errors during transformation
+                        res.end(); // End the connection
+                    }
+                });
+
+                // Handle errors on the transformer stream - mainly for standard streaming mode
+                streamTransformer.on('error', (err) => {
+                    console.error('Error in stream transformer:', err);
+                    if (!res.headersSent) {
+                        res.status(500).json({ error: { message: 'Error processing stream data.' } });
+                    } else {
+                        res.end();
+                    }
+                });
+            }
 
              console.log(`Streaming response initiated for key ${selectedKeyId}`);
 
