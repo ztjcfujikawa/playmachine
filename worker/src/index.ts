@@ -9,6 +9,7 @@ export interface Env {
 	// Environment Variables
 	ADMIN_PASSWORD?: string;
 	SESSION_SECRET_KEY?: string;
+	KEEPALIVE_ENABLED?: string; // Added for keepalive feature
 }
 
 // --- Session Constants ---
@@ -434,12 +435,99 @@ function transformGeminiStreamChunk(geminiChunk: any, modelId: string): string |
 	}
 }
 
-// Helper to transform Gemini non-stream response to OpenAI response
-function transformGeminiResponseToOpenAI(geminiResponse: any, modelId: string): string {
+// --- Helper Functions for Keepalive ---
+
+/**
+ * Encodes a keepalive chunk in SSE format.
+ */
+function encodeKeepAliveChunk(modelId: string): Uint8Array {
+	const keepAliveData = {
+		id: `chatcmpl-keepalive-${Date.now()}`,
+		object: "chat.completion.chunk",
+		created: Math.floor(Date.now() / 1000),
+		model: modelId,
+		choices: [{
+			index: 0,
+			delta: {}, // Empty delta signifies keepalive
+			finish_reason: null
+		}]
+	};
+	const encoder = new TextEncoder();
+	return encoder.encode(`data: ${JSON.stringify(keepAliveData)}\n\n`);
+}
+
+/**
+ * Encodes standard OpenAI response parts (role, content, finish) into SSE chunks.
+ */
+function encodeOpenAiResponseChunk(
+	type: 'role' | 'content' | 'finish',
+	modelId: string,
+	data?: { role?: string; content?: string | null; finish_reason?: string | null; tool_calls?: any[] }
+): Uint8Array {
+	const chunkId = `chatcmpl-${type}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+	const delta: any = {};
+	let finish_reason: string | null = null;
+
+	if (type === 'role' && data?.role) {
+		delta.role = data.role;
+	} else if (type === 'content') {
+		// Handle both content and potential tool_calls in the 'content' phase
+		if (data?.tool_calls) {
+			delta.tool_calls = data.tool_calls;
+			// If there are tool calls, content should be explicitly null unless provided
+			delta.content = data?.content !== undefined ? data.content : null;
+		} else if (data?.content !== undefined) {
+			delta.content = data.content;
+		}
+	} else if (type === 'finish') {
+		finish_reason = data?.finish_reason || "stop"; // Default to stop if not provided
+	}
+
+	const openaiChunk = {
+		id: chunkId,
+		object: "chat.completion.chunk",
+		created: Math.floor(Date.now() / 1000),
+		model: modelId,
+		choices: [{
+			index: 0,
+			delta: delta,
+			finish_reason: finish_reason
+		}]
+	};
+	const encoder = new TextEncoder();
+	return encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`);
+}
+
+
+// --- Helper to transform Gemini non-stream response to OpenAI response ---
+// Now returns the parsed object instead of a string
+function transformGeminiResponseToOpenAIObject(geminiResponse: any, modelId: string): any {
 	try {
 		const candidate = geminiResponse.candidates?.[0];
 		if (!candidate) {
-			throw new Error("No candidates found in Gemini response");
+			// Check for promptFeedback for blocked prompts
+			if (geminiResponse.promptFeedback?.blockReason) {
+				console.warn(`Gemini response blocked. Reason: ${geminiResponse.promptFeedback.blockReason}`);
+				// Return a structured error response mimicking OpenAI format
+				return {
+					id: `chatcmpl-blocked-${Date.now()}`,
+					object: "chat.completion",
+					created: Math.floor(Date.now() / 1000),
+					model: modelId,
+					choices: [{
+						index: 0,
+						message: {
+							role: "assistant",
+							content: `[Content Blocked: ${geminiResponse.promptFeedback.blockReason}]`
+						},
+						finish_reason: "content_filter",
+						logprobs: null,
+					}],
+					usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, // Usage might be missing
+				};
+			}
+			// If no candidates and no block reason, throw error
+			throw new Error("No candidates or block reason found in Gemini response");
 		}
 
 		let contentText: string | null = null;
@@ -508,23 +596,27 @@ function transformGeminiResponseToOpenAI(geminiResponse: any, modelId: string): 
 				},
 			],
 			usage: usage,
+			// Include prompt feedback if available
+			...(geminiResponse.promptFeedback && { prompt_feedback: geminiResponse.promptFeedback })
 		};
-		return JSON.stringify(openaiResponse);
+		// Return the object directly
+		return openaiResponse;
 	} catch (e) {
 		console.error("Error transforming Gemini non-stream response:", e, "Response:", geminiResponse);
-		// Return an error structure in OpenAI format
-		return JSON.stringify({
-			id: `chatcmpl-${Date.now()}`,
+		// Return an error object structure in OpenAI format
+		return {
+			id: `chatcmpl-error-${Date.now()}`,
 			object: "chat.completion",
 			created: Math.floor(Date.now() / 1000),
 			model: modelId,
 			choices: [{
 				index: 0,
-				message: { role: "assistant", content: `Error processing Gemini response: ${e instanceof Error ? e.message : String(e)}` },
+				message: { role: "assistant", content: `[Error processing Gemini response: ${e instanceof Error ? e.message : String(e)}]` },
 				finish_reason: "error",
+				logprobs: null,
 			}],
 			usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-		});
+		};
 	}
 }
 
@@ -536,6 +628,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	let requestedModelId: string | undefined;
 	let stream: boolean = false;
 	let workerApiKey: string | null = null;
+	const isKeepAliveEnabled = env.KEEPALIVE_ENABLED === 'true'; // Check keepalive env var
 
 	try {
 		requestBody = await request.json();
@@ -561,9 +654,10 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	let lastErrorStatus = 500;
 	let modelInfo: ModelConfig | undefined;
 	let modelCategory: 'Pro' | 'Flash' | 'Custom' | undefined;
-	let safetyEnabled = true;
+	let safetyEnabled = true; // Default safety
 	let modelsConfig: Record<string, ModelConfig> | null;
-	let safetySettingsJson: string | null; // Declare safetySettingsJson here
+	let safetySettingsJson: string | null;
+	let useKeepAlive = false; // Initialize keepalive flag
 
 	try {
 		// Fetch models config and safety settings once before the loop
@@ -592,7 +686,13 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 		}
 		console.log(`Safety settings for this request: ${safetyEnabled}`);
 
-		// --- Transform Request Body (Needs to be done once before loop as it's static) ---
+		// --- Determine if Keepalive Mode should be used ---
+		useKeepAlive = isKeepAliveEnabled && stream && !safetyEnabled;
+		if (useKeepAlive) {
+			console.log("KEEPALIVE Mode Activated: Streaming request with safety disabled.");
+		}
+
+		// --- Transform Request Body ---
 		const { contents, systemInstruction, tools: geminiTools } = transformOpenAiToGemini(requestBody, requestedModelId, safetyEnabled);
 		if (contents.length === 0 && !systemInstruction) {
 			return new Response(JSON.stringify({ error: "No valid user, assistant, or converted system messages found." }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
@@ -671,11 +771,13 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				// --- End Simple Quota Check ---
 
 
-				console.log(`Attempt ${attempt}: Proxying request for model: ${requestedModelId}, Category: ${modelCategory}, KeyID: ${selectedKey.id}, Safety: ${safetyEnabled}`);
+				console.log(`Attempt ${attempt}: Proxying request for model: ${requestedModelId}, Category: ${modelCategory}, KeyID: ${selectedKey.id}, Safety: ${safetyEnabled}, KeepAlive: ${useKeepAlive}`);
 
 				// 4. Prepare and Send Request to Gemini
-				const apiAction = stream ? 'streamGenerateContent' : 'generateContent';
-				const querySeparator = stream ? '?alt=sse&' : '?'; // Added alt=sse for streaming
+				// If keepalive is active, force non-streaming, otherwise use requested stream setting
+				const actualStreamMode = useKeepAlive ? false : stream;
+				const apiAction = actualStreamMode ? 'streamGenerateContent' : 'generateContent';
+				const querySeparator = actualStreamMode ? '?alt=sse&' : '?'; // Use alt=sse only if actually streaming to Gemini
 				const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
 
 				const geminiRequestHeaders = new Headers();
@@ -684,9 +786,10 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				geminiRequestHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
 				geminiRequestHeaders.set('Pragma', 'no-cache');
 				geminiRequestHeaders.set('Expires', '0');
-				geminiRequestHeaders.set('Accept', stream ? 'text/event-stream' : 'application/json');
+				// Accept header depends on actual call type to Gemini
+				geminiRequestHeaders.set('Accept', actualStreamMode ? 'text/event-stream' : 'application/json');
 
-				console.log(`Attempt ${attempt}: Sending ${stream ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);
+				console.log(`Attempt ${attempt}: Sending ${actualStreamMode ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);
 
 				const geminiResponse = await fetch(geminiUrl, {
 					method: 'POST',
@@ -733,67 +836,184 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 					console.log(`Attempt ${attempt}: Request successful with key ${selectedKey.id}.`);
 					ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory, true)); // Reset 429 counters on success
 
-					// --- Handle Response Transformation (moved from outside loop) ---
+					// --- Handle Response Transformation ---
 					const responseHeaders = new Headers({
-						'Content-Type': stream ? 'text/event-stream' : 'application/json',
+						// Always set stream headers if the *original* request was stream, even for keepalive
+						'Content-Type': stream ? 'text/event-stream; charset=utf-8' : 'application/json; charset=utf-8',
 						'Cache-Control': 'no-cache',
-						'Connection': 'keep-alive',
+						'Connection': stream ? 'keep-alive' : 'close', // Keep-alive only for streams
 						...corsHeaders()
 					});
 
-					if (stream && geminiResponse.body) {
+					// --- KEEPALIVE MODE ---
+					if (useKeepAlive) {
+						const geminiJson = await geminiResponse.json(); // Get full response (since actualStreamMode was false)
+						console.log("Processing successful response in KEEPALIVE mode.");
+
+						const keepAliveStream = new ReadableStream({
+							async start(controller) {
+								let keepAliveTimer: number | undefined = undefined;
+								let isCancelled = false;
+
+								// Function to send keepalive chunks periodically
+								const sendKeepAlive = () => {
+									if (isCancelled) return;
+									try {
+										controller.enqueue(encodeKeepAliveChunk(requestedModelId!));
+										console.log("Keepalive chunk sent.");
+										keepAliveTimer = setTimeout(sendKeepAlive, 5000); // Send every 5 seconds
+									} catch (e) {
+										console.error("Error sending keepalive chunk:", e);
+										clearTimeout(keepAliveTimer);
+										// Attempt to close stream gracefully on error
+										try { controller.close(); } catch (_) { }
+									}
+								};
+
+								try {
+									// Send the first keepalive immediately
+									controller.enqueue(encodeKeepAliveChunk(requestedModelId!));
+									console.log("Initial keepalive chunk sent.");
+									keepAliveTimer = setTimeout(sendKeepAlive, 5000);
+
+									// Transform the complete Gemini response
+									const openaiResponseObject = transformGeminiResponseToOpenAIObject(geminiJson, requestedModelId!);
+
+									// Extract necessary parts
+									const finalMessage = openaiResponseObject?.choices?.[0]?.message;
+									const finalFinishReason = openaiResponseObject?.choices?.[0]?.finish_reason;
+
+									// Delay slightly before sending the full response
+									await new Promise(resolve => setTimeout(resolve, 1000));
+
+									if (isCancelled) {
+										console.log("Keepalive stream cancelled before sending full response.");
+										clearTimeout(keepAliveTimer);
+										return;
+									}
+
+									// Stop sending keepalive messages
+									clearTimeout(keepAliveTimer);
+									console.log("Keepalive timer cleared.");
+
+									// Send the final OpenAI chunks
+									controller.enqueue(encodeOpenAiResponseChunk('role', requestedModelId!, { role: 'assistant' }));
+									controller.enqueue(encodeOpenAiResponseChunk('content', requestedModelId!, {
+										content: finalMessage?.content,
+										tool_calls: finalMessage?.tool_calls
+									}));
+									controller.enqueue(encodeOpenAiResponseChunk('finish', requestedModelId!, { finish_reason: finalFinishReason }));
+
+									// Send DONE signal
+									controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+
+									// Close the stream
+									controller.close();
+									console.log("Keepalive stream finished successfully.");
+
+								} catch (err) {
+									console.error("Error during keepalive stream processing:", err);
+									clearTimeout(keepAliveTimer); // Ensure timer is cleared on error
+									// Try to send an error chunk before closing
+									try {
+										const errorChunk = encodeOpenAiResponseChunk('content', requestedModelId!, { content: `[Keepalive Processing Error: ${err instanceof Error ? err.message : String(err)}]` });
+										controller.enqueue(errorChunk);
+										controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+									} catch (e) {
+										console.error("Failed to send error chunk in keepalive:", e)
+									}
+									try { controller.close(); } catch (_) { } // Close stream on error
+								}
+							},
+							cancel(reason) {
+								console.log("Keepalive stream cancelled.", reason);
+								// Cleanup logic if needed (e.g., clear timers, although start handles this)
+								// Set a flag or mechanism for the async start function to check
+								// Note: Direct cancellation handling within start is tricky, often relies on checks
+							}
+						});
+
+						return new Response(keepAliveStream, { status: 200, headers: responseHeaders });
+
+					}
+					// --- STANDARD STREAMING MODE ---
+					else if (stream && geminiResponse.body) {
+						console.log("Processing successful response in STANDARD STREAMING mode.");
 						const textDecoder = new TextDecoder();
 						let buffer = '';
 						const transformer = new TransformStream({
 							async transform(chunk, controller) {
 								buffer += textDecoder.decode(chunk, { stream: true });
 								const lines = buffer.split('\n');
-								buffer = lines.pop() || '';
+								buffer = lines.pop() || ''; // Keep the potentially incomplete last line
 								for (const line of lines) {
 									if (line.startsWith('data: ')) {
 										try {
-											if (line.trim() === 'data: [DONE]') {
+											// Skip empty data lines sometimes sent by Gemini
+											const trimmedData = line.substring(6).trim();
+											if (trimmedData.length === 0) continue;
+
+											if (trimmedData === '[DONE]') {
+												// Gemini itself doesn't send [DONE] in SSE, but handle defensively
 												controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
 												continue;
 											}
-											const jsonData = JSON.parse(line.substring(6));
+											const jsonData = JSON.parse(trimmedData);
 											const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
 											if (openaiChunkStr) controller.enqueue(new TextEncoder().encode(openaiChunkStr));
 										} catch (e) {
 											console.error("Error parsing/transforming stream line:", line, e);
-											controller.enqueue(new TextEncoder().encode(`data: {"error": "Error processing stream chunk: ${e instanceof Error ? e.message : String(e)}"}\n\n`));
+											// Send an error chunk in the stream
+											const errorMsg = `Error processing stream chunk: ${e instanceof Error ? e.message : String(e)}`;
+											const errorChunk = encodeOpenAiResponseChunk('content', requestedModelId!, { content: `[${errorMsg}]` });
+											controller.enqueue(errorChunk);
 										}
 									}
 								}
 							},
 							flush(controller) {
+								// Process any remaining data in the buffer
 								if (buffer.length > 0 && buffer.startsWith('data: ')) {
 									try {
-										if (buffer.trim() === 'data: [DONE]') {
-											controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-										} else {
-											const jsonData = JSON.parse(buffer.substring(6));
+										const trimmedData = buffer.substring(6).trim();
+										if (trimmedData.length > 0 && trimmedData !== '[DONE]') {
+											const jsonData = JSON.parse(trimmedData);
 											const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
 											if (openaiChunkStr) controller.enqueue(new TextEncoder().encode(openaiChunkStr));
 										}
-									} catch (e) { console.error("Error handling final buffer:", buffer, e); }
+									} catch (e) {
+										console.error("Error handling final stream buffer:", buffer, e);
+										const errorMsg = `Error processing final stream chunk: ${e instanceof Error ? e.message : String(e)}`;
+										const errorChunk = encodeOpenAiResponseChunk('content', requestedModelId!, { content: `[${errorMsg}]` });
+										controller.enqueue(errorChunk);
+									}
 								}
+								// Always send [DONE] at the end of a successful stream
 								controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+								console.log("Standard stream finished.");
 							}
 						});
+						// Pipe the *actual* Gemini stream through the transformer
 						return new Response(geminiResponse.body.pipeThrough(transformer), { status: 200, headers: responseHeaders });
-					} else if (!stream) {
+					}
+					// --- NON-STREAMING MODE ---
+					else if (!stream) {
+						console.log("Processing successful response in NON-STREAMING mode.");
 						const geminiJson = await geminiResponse.json();
-						const openaiJsonString = transformGeminiResponseToOpenAI(geminiJson, requestedModelId!);
-						return new Response(openaiJsonString, { status: 200, headers: responseHeaders });
-					} else {
+						// Use the object transformation function
+						const openaiJsonObject = transformGeminiResponseToOpenAIObject(geminiJson, requestedModelId!);
+						return new Response(JSON.stringify(openaiJsonObject), { status: 200, headers: responseHeaders });
+					}
+					// --- ERROR: STREAM EXPECTED BUT NO BODY ---
+					else {
+						console.error("Stream requested but Gemini response body is missing.");
 						lastErrorBody = { error: "Gemini response body missing for stream" };
 						lastErrorStatus = 500;
-						break; // Exit loop if stream body is missing
+						break; // Exit loop
 					}
 				} // End geminiResponse.ok check
 
-			} catch (fetchError) {
+			} catch (fetchError) { // Catch errors *within* a single attempt
 				// Catch network errors or other errors during fetch/key selection within an attempt
 				console.error(`Attempt ${attempt}: Error during proxy call:`, fetchError);
 				lastErrorBody = { error: { message: `Internal Worker Error during attempt ${attempt}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`, type: 'worker_internal_error' } };
