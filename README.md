@@ -314,7 +314,6 @@ These deployment methods configure environment variables through the `.env` file
   * `SESSION_SECRET_KEY`: Key for securing user sessions (use a long, random string).
 * **Optional Environment Variables**:
   * `PORT`: (Local Node.js/Docker only) Port for the service to listen on, default is 3000. Hugging Face handles the port automatically.
-  * `CF_GATEWAY`: Cloudflare Gateway configuration. Set to "1" to use default Gateway or provide "project-id/gateway-name" format for custom Gateway. If not set, defaults to direct Gemini API access.
 * **GitHub Sync Environment Variables (Optional, Required for Hugging Face)**:
   * `GITHUB_PROJECT`: Path to **your own** GitHub repository for data syncing (format: `username/repo-name`).
   * `GITHUB_PROJECT_PAT`: GitHub Personal Access Token with `repo` permission.

@@ -95,28 +95,4 @@ app.listen(port, '0.0.0.0', () => {
         // Fallback for local or other environments
         console.log(`Admin UI should be available at http://localhost:${port}/admin (or the server's public address)`);
     }
-    
-    // Display current Gemini API request URL information
-    const CF_GATEWAY = process.env.CF_GATEWAY;
-    const CF_GATEWAY_BASE = 'https://gateway.ai.cloudflare.com/v1';
-    const BASE_GEMINI_URL = 'https://generativelanguage.googleapis.com';
-    const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
-    
-    let baseApiUrl = BASE_GEMINI_URL;
-    
-    if (CF_GATEWAY) {
-        if (CF_GATEWAY === '1') {
-            baseApiUrl = `${CF_GATEWAY_BASE}/${DEFAULT_PROJECT_ID}/gemini/google-ai-studio`;
-        } else {
-            const pattern = /([0-9a-f]{32})\/([^\/\s]+)/i;
-            const matches = CF_GATEWAY.replace(/\/+$/, '').match(pattern);
-            if (matches && matches.length >= 3) {
-                const projectId = matches[1];
-                const gatewayName = matches[2];
-                baseApiUrl = `${CF_GATEWAY_BASE}/${projectId}/${gatewayName}/google-ai-studio`;
-            }
-        }
-    }
-    
-    console.log(`Gemini API URL: ${baseApiUrl}`);
 });

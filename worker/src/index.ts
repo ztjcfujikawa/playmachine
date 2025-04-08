@@ -680,7 +680,10 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 
 				const geminiRequestHeaders = new Headers();
 				geminiRequestHeaders.set('Content-Type', 'application/json');
-				geminiRequestHeaders.set('User-Agent', 'Mozilla/5.0 (Cloudflare Worker)'); // Identify worker
+				geminiRequestHeaders.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'); // Chrome UA
+				geminiRequestHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+				geminiRequestHeaders.set('Pragma', 'no-cache');
+				geminiRequestHeaders.set('Expires', '0');
 				geminiRequestHeaders.set('Accept', stream ? 'text/event-stream' : 'application/json');
 
 				console.log(`Attempt ${attempt}: Sending ${stream ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);

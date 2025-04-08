@@ -304,7 +304,6 @@
   * `SESSION_SECRET_KEY`: 用于保护用户会话安全的密钥 (建议使用长随机字符串)。
 * **可选环境变量**:
   * `PORT`: (仅本地 Node.js/Docker) 服务监听的端口，默认为 3000。Hugging Face 会自动处理端口。
-  * `CF_GATEWAY`: Cloudflare Gateway配置。设置为"1"使用默认网关，或提供"project-id/gateway-name"格式的自定义网关。未设置时默认使用直接访问Gemini API。
 * **GitHub 同步环境变量 (可选, Hugging Face 必需)**:
   * `GITHUB_PROJECT`: 用于数据同步的**你自己的** GitHub 仓库路径 (格式: `username/repo-name`)。
   * `GITHUB_PROJECT_PAT`: 具有 `repo` 权限的 GitHub Personal Access Token。
