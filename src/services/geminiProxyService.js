@@ -1,5 +1,4 @@
 const fetch = require('node-fetch');
-const { Readable } = require('stream');
 const { syncToGitHub } = require('../db'); 
 const configService = require('./configService');
 const geminiKeyService = require('./geminiKeyService');
@@ -15,21 +14,6 @@ const PROJECT_ID_REGEX = /^[0-9a-f]{32}$/i;
 const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
 
 async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
-    // Check if KEEPALIVE mode is enabled
-    const keepAliveEnabled = process.env.KEEPALIVE === '1';
-    
-    // If KEEPALIVE is enabled and this is a non-streaming request, return an error
-    if (keepAliveEnabled && !stream) {
-        return { 
-            error: { 
-                message: "KEEPALIVE mode requires streaming request. Please set 'stream: true' in your request when KEEPALIVE is enabled.",
-                type: "invalid_request_error",
-                code: 400
-            }, 
-            status: 400 
-        };
-    }
-    
     const requestedModelId = openAIRequestBody?.model;
 
     if (!requestedModelId) {
@@ -53,12 +37,6 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
             configService.getModelsConfig(),
             configService.getWorkerKeySafetySetting(workerApiKey) // Get safety setting for this worker key
         ]);
-        
-        // If KEEPALIVE is enabled, this is a streaming request, and safety is disabled, we'll handle it specially
-        const useKeepAlive = !isSafetyEnabled && keepAliveEnabled && stream;
-    
-        // If using keepalive, we'll make a non-streaming request to Gemini but send streaming responses to client
-        const actualStreamMode = useKeepAlive ? false : stream;
 
         modelInfo = modelsConfig[requestedModelId];
         if (!modelInfo) {
@@ -123,8 +101,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                 }
 
                 // 4. Prepare and Send Request to Gemini
-                // If keepalive is enabled and original request was streaming, use non-streaming API
-                const apiAction = actualStreamMode ? 'streamGenerateContent' : 'generateContent';
+                const apiAction = stream ? 'streamGenerateContent' : 'generateContent';
                 
                 // Build base URL based on CF_GATEWAY environment variable
                 let baseUrl = BASE_GEMINI_URL;
@@ -178,16 +155,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                     'x-goog-api-key': selectedKey.key
                 };
 
-                console.log(`Attempt ${attempt}: Sending ${actualStreamMode ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);
-                
-                // Log if using keepalive mode
-                if (keepAliveEnabled && stream) {
-                    if (useKeepAlive) {
-                        console.log(`Using KEEPALIVE mode: Client expects stream but sending non-streaming request to Gemini (Safety disabled)`);
-                    } else {
-                        console.log(`KEEPALIVE is enabled but safety is also enabled. Using normal streaming mode.`);
-                    }
-                }
+                console.log(`Attempt ${attempt}: Sending ${stream ? 'streaming' : 'non-streaming'} request to Gemini URL: ${geminiUrl}`);
 
                 const geminiResponse = await fetch(geminiUrl, {
                     method: 'POST',
@@ -247,70 +215,12 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
 
                     console.log(`Chat completions call completed successfully.`);
 
-                    // For KEEPALIVE mode with streaming client request
-                    if (useKeepAlive) {
-                        // Get the complete non-streaming response
-                        const geminiResponseData = await geminiResponse.json();
-                        
-                        // Create a Node.js Readable stream for compatibility with apiV1.js
-                        const keepAliveStream = new Readable({
-                            read() {} // No-op read method
-                        });
-                        
-                        // Function to send keepalive message (empty JSON object to keep connection alive)
-                        const sendKeepAlive = () => {
-                            keepAliveStream.push(JSON.stringify({ keepalive: true }) + '\n');
-                        };
-                        
-                        // Start keepalive messages
-                        const keepAliveInterval = setInterval(sendKeepAlive, 5000);
-                        
-                        // Send first keepalive immediately
-                        sendKeepAlive();
-                        
-                        // Process the full response after a slight delay (wait for first keepalive to be received)
-                        setTimeout(() => {
-                            try {
-                                // Clear the interval after processing
-                                clearInterval(keepAliveInterval);
-                                
-                                // Send the complete Gemini response to the transformer for processing
-                                keepAliveStream.push(JSON.stringify(geminiResponseData) + '\n');
-                                
-                                // End the stream
-                                keepAliveStream.push(null);
-                            } catch (error) {
-                                // Clear the interval on error
-                                clearInterval(keepAliveInterval);
-                                
-                                // Send error message
-                                console.error("Error processing Gemini response in KEEPALIVE mode:", error);
-                                keepAliveStream.push(JSON.stringify({ 
-                                    error: `Error processing Gemini response: ${error.message}` 
-                                }) + '\n');
-                                keepAliveStream.push(null);
-                            }
-                        }, 1000); // Slight delay before processing
-                        
-                        // Create a mock response object that has a body.pipe method compatible with apiV1.js
-                        return {
-                            response: {
-                                body: keepAliveStream,
-                                ok: true,
-                                status: 200
-                            },
-                            selectedKeyId: selectedKey.id,
-                            modelCategory: modelCategory,
-                            isKeepalive: true // Changed to isKeepalive to clearly indicate keepalive mode
-                        };
-                    } else {
-                        // Regular handling (non-KEEPALIVE)
-                        return {
-                            response: geminiResponse,
-                            selectedKeyId: selectedKey.id,
-                            modelCategory: modelCategory
-                        };
-                    }
+                    // Return the successful response object
+                    return {
+                        response: geminiResponse,
+                        selectedKeyId: selectedKey.id,
+                        modelCategory: modelCategory
+                    };
                 }
 
             } catch (fetchError) {
