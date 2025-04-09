@@ -73,7 +73,6 @@ router.post('/chat/completions', async (req, res, next) => {
 
             // Check in advance if it's keepalive mode, if so, no need to check the body stream
             if (!result.isKeepAlive) {
-                // Only check if geminiResponse.body is a readable stream in non-keepalive mode
                 if (!geminiResponse.body || typeof geminiResponse.body.pipe !== 'function') {
                     console.error('Gemini response body is not a readable stream for streaming request.');
                     // Send a valid SSE error event before closing

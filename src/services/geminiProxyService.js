@@ -12,18 +12,6 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
     // Check if KEEPALIVE mode is enabled
     const keepAliveEnabled = process.env.KEEPALIVE === '1';
     
-    // If KEEPALIVE is enabled and this is a non-streaming request, return an error
-    if (keepAliveEnabled && !stream) {
-        return { 
-            error: { 
-                message: "KEEPALIVE mode requires streaming request. Please set 'stream: true' in your request when KEEPALIVE is enabled.",
-                type: "invalid_request_error",
-                code: 400
-            }, 
-            status: 400 
-        };
-    }
-    
     const requestedModelId = openAIRequestBody?.model;
 
     if (!requestedModelId) {
@@ -246,7 +234,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
         console.error("Error before starting proxy attempts:", initialError);
         return {
             error: {
-                message: `Internal Proxy Error: ${error.message}`,
+                message: `Internal Proxy Error: ${initialError.message}`,
                 type: 'proxy_internal_error'
             },
             status: 500
