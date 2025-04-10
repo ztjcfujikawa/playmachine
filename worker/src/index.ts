@@ -773,12 +773,35 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 
 				console.log(`Attempt ${attempt}: Proxying request for model: ${requestedModelId}, Category: ${modelCategory}, KeyID: ${selectedKey.id}, Safety: ${safetyEnabled}, KeepAlive: ${useKeepAlive}`);
 
+				// Check if web search functionality needs to be enabled
+				// 1. Via web_search parameter or 2. Using a model ending with -search
+				const isSearchModel = requestedModelId.endsWith('-search');
+				const actualModelId = isSearchModel ? requestedModelId.replace('-search', '') : requestedModelId;
+
+				if (requestBody.web_search === 1 || isSearchModel) {
+					console.log(`Web search enabled for this request (${isSearchModel ? 'model-based' : 'parameter-based'})`);
+
+					// Create Google search tool
+					const googleSearchTool = {
+						googleSearch: {}
+					};
+
+					// Add to existing tools or create a new tools array
+					if (geminiRequestBody.tools) {
+						geminiRequestBody.tools = [...geminiRequestBody.tools, googleSearchTool];
+					} else {
+						geminiRequestBody.tools = [googleSearchTool];
+					}
+				}
+
 				// 4. Prepare and Send Request to Gemini
 				// If keepalive is active, force non-streaming, otherwise use requested stream setting
 				const actualStreamMode = useKeepAlive ? false : stream;
 				const apiAction = actualStreamMode ? 'streamGenerateContent' : 'generateContent';
 				const querySeparator = actualStreamMode ? '?alt=sse&' : '?'; // Use alt=sse only if actually streaming to Gemini
-				const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${requestedModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
+
+				// For -search models, use the original model name
+				const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${actualModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
 
 				const geminiRequestHeaders = new Headers();
 				geminiRequestHeaders.set('Content-Type', 'application/json');
@@ -1062,8 +1085,26 @@ async function handleV1Models(request: Request, env: Env, ctx: ExecutionContext)
 				id: modelId,
 				object: "model",
 				created: Math.floor(Date.now() / 1000),
-				owned_by: "google", 
+				owned_by: "google",
 			}));
+
+			// Add search versions for gemini-2.0+ series models
+			const searchModels = Object.keys(config)
+				.filter(modelId =>
+					// Match gemini-2.0, gemini-2.5, gemini-3.0, etc. series models
+					/^gemini-[2-9]\.\d/.test(modelId) &&
+					// Exclude models that are already search versions
+					!modelId.endsWith('-search')
+				)
+				.map(modelId => ({
+					id: `${modelId}-search`,
+					object: "model",
+					created: Math.floor(Date.now() / 1000),
+					owned_by: "google",
+				}));
+
+			// Merge the list of regular models and search models
+			modelsData = [...modelsData, ...searchModels];
 		} else {
 			console.log("No models found in WORKER_CONFIG_KV, returning empty list.");
 		}

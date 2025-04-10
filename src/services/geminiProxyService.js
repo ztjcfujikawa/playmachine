@@ -36,15 +36,22 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
             configService.getWorkerKeySafetySetting(workerApiKey) // Get safety setting for this worker key
         ]);
         
+        // Check if web search functionality needs to be added
+        // 1. Via web_search parameter or 2. Using a model ending with -search
+        const isSearchModel = requestedModelId.endsWith('-search');
+        const actualModelId = isSearchModel ? requestedModelId.replace('-search', '') : requestedModelId;
+        
         // If KEEPALIVE is enabled, this is a streaming request, and safety is disabled, we'll handle it specially
         const useKeepAlive = !isSafetyEnabled && keepAliveEnabled && stream;
     
         // If using keepalive, we'll make a non-streaming request to Gemini but send streaming responses to client
         const actualStreamMode = useKeepAlive ? false : stream;
 
-        modelInfo = modelsConfig[requestedModelId];
+        // If it's a search model, use the original model ID to find model info
+        const modelLookupId = isSearchModel ? actualModelId : requestedModelId;
+        modelInfo = modelsConfig[modelLookupId];
         if (!modelInfo) {
-            return { error: { message: `Model '${requestedModelId}' is not configured in the proxy.` }, status: 400 };
+            return { error: { message: `Model '${modelLookupId}' is not configured in the proxy.` }, status: 400 };
         }
         modelCategory = modelInfo.category;
 
@@ -53,7 +60,9 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
             let selectedKey;
             try {
                 // 1. Get Key inside the loop for each attempt
-                selectedKey = await geminiKeyService.getNextAvailableGeminiKey(requestedModelId);
+                // If it's a search model, use the original model ID to get the API key
+                const keyModelId = isSearchModel ? actualModelId : requestedModelId;
+                selectedKey = await geminiKeyService.getNextAvailableGeminiKey(keyModelId);
 
                 // 2. Validate Key
                 if (!selectedKey) {
@@ -93,6 +102,22 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                     ...(systemInstruction && { systemInstruction: systemInstruction }),
                 };
 
+                if (openAIRequestBody.web_search === 1 || isSearchModel) {
+                    console.log(`Web search enabled for this request (${isSearchModel ? 'model-based' : 'parameter-based'})`);
+                    
+                    // Create Google Search tool
+                    const googleSearchTool = {
+                        googleSearch: {}
+                    };
+                    
+                    // Add to existing tools or create a new tools array
+                    if (geminiRequestBody.tools) {
+                        geminiRequestBody.tools = [...geminiRequestBody.tools, googleSearchTool];
+                    } else {
+                        geminiRequestBody.tools = [googleSearchTool];
+                    }
+                }
+
                 if (!isSafetyEnabled) {
                     geminiRequestBody.safetySettings = [
                         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' }, 
@@ -109,7 +134,8 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                 const apiAction = actualStreamMode ? 'streamGenerateContent' : 'generateContent';
                 
                 // Build complete API URL with the default Gemini API URL
-                const geminiUrl = `${BASE_GEMINI_URL}/v1beta/models/${requestedModelId}:${apiAction}`;
+                // Use actualModelId instead of requestedModelId with -search suffix
+                const geminiUrl = `${BASE_GEMINI_URL}/v1beta/models/${actualModelId}:${apiAction}`;
                 
                 const geminiRequestHeaders = {
                     'Content-Type': 'application/json',
