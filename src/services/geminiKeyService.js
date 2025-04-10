@@ -744,10 +744,13 @@ async function forceSetQuotaToLimit(keyId, category, modelId, counterKey) {
  * @param {string} keyId
  * @param {'Pro' | 'Flash' | 'Custom'} category
  * @param {string} [modelId] Optional model ID.
+ * @param {string} [errorMessage] Optional error message to determine if quota exceeded.
  * @returns {Promise<void>}
  */
-async function handle429Error(keyId, category, modelId) {
+async function handle429Error(keyId, category, modelId, errorMessage) {
     const CONSECUTIVE_429_LIMIT = 3;
+    const QUOTA_EXCEEDED_MESSAGE = "You exceeded your current quota, please check your plan and billing details.";
+    const isQuotaExceeded = errorMessage && errorMessage.includes(QUOTA_EXCEEDED_MESSAGE);
 
     // Start a transaction for atomic update
     await configService.runDb('BEGIN TRANSACTION');
@@ -775,18 +778,21 @@ async function handle429Error(keyId, category, modelId) {
         let needsQuotaCheck = false;
         const modelConfig = modelId ? modelsConfig[modelId] : undefined;
 
+        // Create different counters for different types of 429
+        const counterPrefix = isQuotaExceeded ? "quota:" : "regular:";
+
         if (category === 'Custom' && modelId) {
-            counterKey = modelId;
-            needsQuotaCheck = !!modelConfig?.dailyQuota;
+            counterKey = counterPrefix + modelId;
+            needsQuotaCheck = isQuotaExceeded && !!modelConfig?.dailyQuota;
         } else if ((category === 'Pro' || category === 'Flash') && modelId && modelConfig?.individualQuota) {
-            counterKey = modelId;
-            needsQuotaCheck = true;
+            counterKey = counterPrefix + modelId;
+            needsQuotaCheck = isQuotaExceeded && true;
         } else if (category === 'Pro') {
-            counterKey = 'category:pro';
-            needsQuotaCheck = !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
+            counterKey = counterPrefix + 'category:pro';
+            needsQuotaCheck = isQuotaExceeded && !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
         } else if (category === 'Flash') {
-            counterKey = 'category:flash';
-            needsQuotaCheck = !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
+            counterKey = counterPrefix + 'category:flash';
+            needsQuotaCheck = isQuotaExceeded && !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
         }
 
         if (!counterKey) {
@@ -795,9 +801,9 @@ async function handle429Error(keyId, category, modelId) {
             return;
         }
         
-        if (!needsQuotaCheck) {
+        if (!needsQuotaCheck && isQuotaExceeded) {
             await configService.runDb('ROLLBACK');
-            console.log(`Skipping 429 counter for key ${keyId}, counter ${counterKey} as no relevant quota is configured.`);
+            console.log(`Skipping quota-exceeded 429 counter for key ${keyId}, counter ${counterKey} as no relevant quota is configured.`);
             return;
         }
 
@@ -805,19 +811,23 @@ async function handle429Error(keyId, category, modelId) {
         const currentCount = (consecutive429Counts[counterKey] || 0) + 1;
         consecutive429Counts[counterKey] = currentCount;
 
-        console.warn(`Received 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
+        if (isQuotaExceeded) {
+            console.warn(`Received quota-exceeded 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
+        } else {
+            console.warn(`Received regular 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
+        }
 
-        // Check if we need to force quota limit
-        if (currentCount >= CONSECUTIVE_429_LIMIT) {
+        // The quota limit is enforced only when 429 errors of the exhausted quota type consecutively reach the threshold
+        if (isQuotaExceeded && currentCount >= CONSECUTIVE_429_LIMIT) {
             // Commit this transaction before calling forceSetQuotaToLimit
             // because forceSetQuotaToLimit starts its own transaction
             await configService.runDb('COMMIT');
             
-            console.warn(`Consecutive 429 limit (${CONSECUTIVE_429_LIMIT}) reached for key ${keyId}, counter ${counterKey}. Forcing quota limit.`);
+            console.warn(`Consecutive quota-exceeded 429 limit (${CONSECUTIVE_429_LIMIT}) reached for key ${keyId}, counter ${counterKey}. Forcing quota limit.`);
             // forceSetQuotaToLimit will handle the counterKey reset and has its own transaction
             await forceSetQuotaToLimit(keyId, category, modelId, counterKey);
         } else {
-            // Limit not reached, update the count within this transaction
+            // Limit not reached or not a quota-exceeded 429, just update the count within this transaction
             await configService.runDb(
                 'UPDATE gemini_keys SET consecutive_429_counts = ? WHERE id = ?',
                 [JSON.stringify(consecutive429Counts), keyId]
@@ -825,6 +835,10 @@ async function handle429Error(keyId, category, modelId) {
             
             // Commit the transaction
             await configService.runDb('COMMIT');
+            
+            if (!isQuotaExceeded) {
+                console.log(`Regular 429 received, only tracking count without forcing quota limit.`);
+            }
         }
     } catch (e) {
         // Rollback on error

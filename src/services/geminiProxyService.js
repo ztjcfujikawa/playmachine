@@ -120,7 +120,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                     // Add a prompt at the end of the request to encourage the model to use search tools
                     geminiRequestBody.contents.push({
                         role: 'user',
-                        parts: [{ text: 'Use search tools to retrieve content' }]
+                        parts: [{ text: '(Use search tools to get the relevant information and complete this request.)' }]
                     });
                 }
 
@@ -190,8 +190,12 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
 
                     // Handle specific errors impacting key status
                     if (geminiResponse.status === 429) {
+                        // Pass the error message to the handle429Error function
+                        const errorMessage = lastError?.message || errorBodyText;
+                        console.log(`429 error message: ${errorMessage}`);
+                        
                         // Record 429 for the key
-                        geminiKeyService.handle429Error(selectedKey.id, modelCategory, requestedModelId)
+                        geminiKeyService.handle429Error(selectedKey.id, modelCategory, requestedModelId, errorMessage)
                             .catch(err => console.error(`Error handling 429 for key ${selectedKey.id} in background:`, err));
 
                         // If not the last attempt, continue to the next key
