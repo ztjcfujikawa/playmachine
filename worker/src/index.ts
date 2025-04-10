@@ -792,6 +792,12 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 					} else {
 						geminiRequestBody.tools = [googleSearchTool];
 					}
+					
+					// Add a prompt at the end of the request to encourage the model to use search tools
+					geminiRequestBody.contents.push({
+						role: 'user',
+						parts: [{ text: 'Use search tools to retrieve content' }]
+					});
 				}
 
 				// 4. Prepare and Send Request to Gemini
