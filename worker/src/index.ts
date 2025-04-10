@@ -848,7 +848,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 						const errorMessage = lastErrorBody?.error?.message || errorBodyText;
 						console.log(`429 error message: ${errorMessage}`);
 						
-						ctx.waitUntil(handle429Error(selectedKey.id, env, modelCategory!, requestedModelId, errorMessage));
+						ctx.waitUntil(handle429Error(selectedKey.id, env, modelCategory!, actualModelId, errorMessage));
 						if (attempt < MAX_RETRIES) {
 							console.warn(`Attempt ${attempt}: Received 429, trying next key...`);
 							continue; // Go to the next iteration
@@ -867,7 +867,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				} else {
 					// 6. Process Successful Response
 					console.log(`Attempt ${attempt}: Request successful with key ${selectedKey.id}.`);
-					ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, requestedModelId, modelCategory, true)); // Reset 429 counters on success
+					ctx.waitUntil(incrementKeyUsage(selectedKey.id, env, actualModelId, modelCategory, true)); // Reset 429 counters on success
 
 					// --- Handle Response Transformation ---
 					const responseHeaders = new Headers({
