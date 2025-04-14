@@ -62,10 +62,63 @@ router.delete('/gemini-keys/:id', async (req, res, next) => {
 
 // Base Gemini API URL
 const BASE_GEMINI_URL = 'https://generativelanguage.googleapis.com';
+// Cloudflare Gateway base path
+const CF_GATEWAY_BASE = 'https://gateway.ai.cloudflare.com/v1';
+// Project ID regex pattern - 32 character hex string
+const PROJECT_ID_REGEX = /^[0-9a-f]{32}$/i;
+// Default Cloudflare Gateway project ID (Ensure this matches geminiProxyService.js or is appropriate)
+const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
 
-// Helper to get the base URL for Gemini API
+// Helper to get the base URL for Gemini API, considering CF_GATEWAY
 function getGeminiBaseUrl() {
-    return BASE_GEMINI_URL;
+    let baseUrl = BASE_GEMINI_URL; // Default to standard Gemini URL
+    const cfGateway = process.env.CF_GATEWAY;
+
+    // Return default URL if CF_GATEWAY is not set
+    if (!cfGateway) {
+        // Use default Gemini API URL (already set)
+    } else {
+        // Handle case 1: CF_GATEWAY = "1" (use default project ID)
+        if (cfGateway === '1') {
+            // Validate default project ID format
+            if (PROJECT_ID_REGEX.test(DEFAULT_PROJECT_ID)) {
+                // Only use default Cloudflare Gateway if project ID format is valid
+                baseUrl = `${CF_GATEWAY_BASE}/${DEFAULT_PROJECT_ID}/gemini/google-ai-studio`;
+                console.log(`Admin API: Using default Cloudflare Gateway: ${baseUrl}`);
+            } else {
+                 console.warn(`Admin API: Invalid DEFAULT_PROJECT_ID format: ${DEFAULT_PROJECT_ID}. Falling back to default Gemini URL.`);
+            }
+            // If invalid, fall back to default Gemini API URL (already set)
+        } else {
+            // Handle case 2: CF_GATEWAY contains projectId/gatewayName
+            try {
+                // Remove trailing slashes
+                let gatewayValue = cfGateway.replace(/\/+$/, '');
+
+                // Try to extract projectId/gatewayName pattern from anywhere in the string
+                const pattern = /([0-9a-f]{32})\/([^\/\s]+)/i;
+                const matches = gatewayValue.match(pattern);
+
+                if (matches && matches.length >= 3) {
+                    const projectId = matches[1];
+                    const gatewayName = matches[2];
+
+                    if (PROJECT_ID_REGEX.test(projectId)) {
+                        baseUrl = `${CF_GATEWAY_BASE}/${projectId}/${gatewayName}/google-ai-studio`;
+                        console.log(`Admin API: Using custom Cloudflare Gateway: ${baseUrl}`);
+                    } else {
+                         console.warn(`Admin API: Invalid Project ID format found in CF_GATEWAY: ${projectId}. Falling back to default Gemini URL.`);
+                    }
+                } else {
+                    console.warn(`Admin API: CF_GATEWAY value "${cfGateway}" does not match expected format. Falling back to default Gemini URL.`);
+                }
+            } catch (error) {
+                console.error('Admin API: Error parsing CF_GATEWAY value:', error);
+                // Fall back to default URL on error (already set)
+            }
+        }
+    }
+    return baseUrl;
 }
 
 // --- Test Gemini Key --- (/api/admin/test-gemini-key)
