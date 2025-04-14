@@ -18,13 +18,12 @@ CF_GATEWAY=https://gateway.ai.cloudflare.com/v1/your_gateway_id/your_gateway_nam
 
 ## 网关创建流程：
 
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)，进入左侧导航栏的 `AI > AI Gateway` 页面。
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)，进入左侧导航栏的 `AI > AI Gateway` 页面。点击右上角的「创建网关」按钮。
 ![](image/gateway-1.jpg)
-2. 点击右上角的「创建网关」按钮。
+2. 填写网关名称（如 test），点击「创建」。
 ![](image/gateway-2.jpg)
-3. 填写网关名称（如 test），点击「创建」。
+3. 创建成功后进入详情页，点击右上角的「API」按钮。复制 API 终端地址，即网关地址，配置到项目中的 `CF_GATEWAY` 环境变量中。
 ![](image/gateway-3.jpg)
-4. 创建成功后进入详情页，点击右上角的「API」按钮。复制 API 终端地址，即网关地址，配置到项目中的 `CF_GATEWAY` 环境变量中。
 ![](image/gateway-4.jpg)
 ---
 
