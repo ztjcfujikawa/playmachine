@@ -827,6 +827,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				});
 
 				// 5. Handle Gemini Response Status and Errors
+				let forceNewKey = false; // Flag to force getting a new key on retry for empty responses
 				if (!geminiResponse.ok) {
 					const errorBodyText = await geminiResponse.text(); // Read error body once
 					console.error(`Attempt ${attempt}: Gemini API error: ${geminiResponse.status} ${geminiResponse.statusText}`, errorBodyText);
@@ -882,6 +883,19 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 					if (useKeepAlive) {
 						const geminiJson = await geminiResponse.json(); // Get full response (since actualStreamMode was false)
 						console.log("Processing successful response in KEEPALIVE mode.");
+						
+						// Check if it's an empty response (finishReason is OTHER and no content)
+						const isEmptyResponse = geminiJson.candidates && 
+											  geminiJson.candidates[0] && 
+											  geminiJson.candidates[0].finishReason === "OTHER" && 
+											  (!geminiJson.candidates[0].content || 
+											   !geminiJson.candidates[0].content.parts || 
+											   geminiJson.candidates[0].content.parts.length === 0);
+						
+						if (isEmptyResponse && attempt < MAX_RETRIES) {
+							console.log(`Detected empty response (finishReason: OTHER), attempting retry #${attempt + 1} with a new key...`);
+							continue; // Continue to the next attempt
+						}
 
 						const keepAliveStream = new ReadableStream({
 							async start(controller) {
@@ -1045,6 +1059,20 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 					else if (!stream) {
 						console.log("Processing successful response in NON-STREAMING mode.");
 						const geminiJson = await geminiResponse.json();
+						
+						// Check if it's an empty response (finishReason is OTHER and no content)
+						const isEmptyResponse = geminiJson.candidates && 
+											  geminiJson.candidates[0] && 
+											  geminiJson.candidates[0].finishReason === "OTHER" && 
+											  (!geminiJson.candidates[0].content || 
+											   !geminiJson.candidates[0].content.parts || 
+											   geminiJson.candidates[0].content.parts.length === 0);
+						
+						if (isEmptyResponse && attempt < MAX_RETRIES) {
+							console.log(`Detected empty response (finishReason: OTHER), attempting retry #${attempt + 1} with a new key...`);
+							continue; // Continue to the next attempt
+						}
+						
 						// Use the object transformation function
 						const openaiJsonObject = transformGeminiResponseToOpenAIObject(geminiJson, requestedModelId!);
 						return new Response(JSON.stringify(openaiJsonObject), { status: 200, headers: responseHeaders });
