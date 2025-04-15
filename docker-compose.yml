@@ -1,7 +1,7 @@
 version: '3.8' 
 services:
   app:
-    build: .
+    image: dreamhartley705/gemini-proxy-panel:latest
     container_name: gemini-proxy-panel
     ports:
       - "3000:3000"

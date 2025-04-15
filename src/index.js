@@ -14,6 +14,10 @@ const authRoutes = require('./routes/auth');
 const adminApiRoutes = require('./routes/adminApi');
 const apiV1Routes = require('./routes/apiV1');
 
+// Import services and utils (ensure proxyPool is imported to trigger its initialization)
+require('./services/geminiProxyService'); // Still need to import this for other initializations if any
+const proxyPool = require('./utils/proxyPool');
+
 // Import middleware
 const requireAdminAuth = require('./middleware/adminAuth');
 
@@ -87,6 +91,17 @@ app.use((err, req, res, next) => {
 // --- Start Server ---
 app.listen(port, '0.0.0.0', () => {
     console.log(`Gemini Proxy Panel (Node.js version) listening on port ${port} (all interfaces)`);
+    
+    // Log Proxy Pool Status
+    const proxyStatus = proxyPool.getProxyPoolStatus(); // Get status from proxyPool module
+    if (proxyStatus.enabled) {
+        console.log(`Proxy Pool: Enabled (Loaded ${proxyStatus.count} SOCKS5 proxies)`);
+    } else if (proxyStatus.count > 0 && !proxyStatus.agentLoaded) {
+        console.log(`Proxy Pool: Configured (${proxyStatus.count} proxies) but DISABLED (missing 'socks-proxy-agent' dependency)`);
+    } else {
+        console.log(`Proxy Pool: Disabled (PROXY environment variable not set or contains no valid SOCKS5 proxies)`);
+    }
+    
     // Check if running in Hugging Face Space
     if (process.env.HUGGING_FACE === '1' && process.env.SPACE_HOST) {
         const adminUrl = `https://${process.env.SPACE_HOST}/admin`;

@@ -3,7 +3,8 @@ const requireAdminAuth = require('../middleware/adminAuth');
 const configService = require('../services/configService');
 const geminiKeyService = require('../services/geminiKeyService');
 const fetch = require('node-fetch'); 
-const { syncToGitHub } = require('../db'); 
+const { syncToGitHub } = require('../db');
+const proxyPool = require('../utils/proxyPool'); // Import the proxy pool module
 const router = express.Router();
 
 // Apply admin authentication middleware to all /api/admin routes
@@ -149,14 +150,24 @@ router.post('/test-gemini-key', async (req, res, next) => {
         let isSuccess = false;
 
         try {
-            const response = await fetch(geminiUrl, {
+            // Get proxy agent
+            const agent = proxyPool.getNextProxyAgent();
+            const fetchOptions = {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'x-goog-api-key': apiKey
                 },
                 body: JSON.stringify(testGeminiRequestBody)
-            });
+            };
+            if (agent) {
+                fetchOptions.agent = agent;
+                console.log(`Admin API (Test Key): Sending request via proxy ${agent.proxy.href}`);
+            } else {
+                 console.log(`Admin API (Test Key): Sending request directly.`);
+            }
+
+            const response = await fetch(geminiUrl, fetchOptions);
             testResponseStatus = response.status;
             testResponseBody = await response.json(); // Attempt to parse JSON
             isSuccess = response.ok;
@@ -204,13 +215,24 @@ router.get('/gemini-models', async (req, res, next) => {
 
          const baseUrl = getGeminiBaseUrl();
          const geminiUrl = `${baseUrl}/v1beta/models`;
-         const response = await fetch(geminiUrl, { 
-             method: 'GET', 
-             headers: { 
+
+         // Get proxy agent
+         const agent = proxyPool.getNextProxyAgent();
+         const fetchOptions = {
+             method: 'GET',
+             headers: {
                  'Content-Type': 'application/json',
                  'x-goog-api-key': availableKey.key
-             } 
-         });
+             }
+         };
+         if (agent) {
+            fetchOptions.agent = agent;
+            console.log(`Admin API (Get Models): Sending request via proxy ${agent.proxy.href}`);
+         } else {
+             console.log(`Admin API (Get Models): Sending request directly.`);
+         }
+
+         const response = await fetch(geminiUrl, fetchOptions);
 
          if (!response.ok) {
              const errorBody = await response.text();

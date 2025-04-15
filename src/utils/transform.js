@@ -26,6 +26,7 @@ function transformOpenAiToGemini(requestBody, requestedModelId, isSafetyEnabled 
 	// 1. Transform Messages
 	const contents = [];
 	let systemInstruction = undefined;
+	let systemMessageLogPrinted = false; // Add flag to track if log has been printed
 
 	messages.forEach((msg) => {
 		let role = undefined;
@@ -42,7 +43,11 @@ function transformOpenAiToGemini(requestBody, requestedModelId, isSafetyEnabled 
 			case 'system':
                 // If safety is disabled OR it's a gemma model, treat system as user
                 if (isSafetyEnabled === false || (requestedModelId && requestedModelId.startsWith('gemma'))) {
-                    console.log(`Safety disabled (${isSafetyEnabled}) or Gemma model detected (${requestedModelId}). Treating system message as user message.`);
+                    // Only print the log message for the first system message encountered
+                    if (!systemMessageLogPrinted) {
+                        console.log(`Safety disabled (${isSafetyEnabled}) or Gemma model detected (${requestedModelId}). Treating system message as user message.`);
+                        systemMessageLogPrinted = true;
+                    }
                     role = 'user';
                     // Content processing for 'user' role will happen below
                 }
