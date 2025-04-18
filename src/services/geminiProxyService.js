@@ -265,12 +265,11 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
 
                     // Handle specific errors impacting key status
                     if (geminiResponse.status === 429) {
-                        // Pass the error message to the handle429Error function
-                        const errorMessage = lastError?.message || errorBodyText;
-                        console.log(`429 error message: ${errorMessage}`);
+                        // Pass the full parsed error object (lastError) which may contain quotaId
+                        console.log(`429 error details: ${JSON.stringify(lastError)}`);
                         
                         // Record 429 for the key - use actualModelId for consistent counting
-                        geminiKeyService.handle429Error(selectedKey.id, modelCategory, actualModelId, errorMessage)
+                        geminiKeyService.handle429Error(selectedKey.id, modelCategory, actualModelId, lastError)
                             .catch(err => console.error(`Error handling 429 for key ${selectedKey.id} in background:`, err));
 
                         // If not the last attempt, continue to the next key

@@ -2485,26 +2485,43 @@ async function forceSetQuotaToLimit(keyId: string, env: Env, category: 'Pro' | '
 
 /**
  * Handles the logic when a 429 error is received from the Gemini API.
- * Increments the consecutive 429 counter for the specific model/category.
- * If the counter reaches 3 for quota-exceeded errors, triggers forceSetQuotaToLimit.
+ * For quota-exceeded errors, increments the consecutive 429 counter.
+ * If the counter reaches 3, triggers forceSetQuotaToLimit.
+ * For regular 429 errors, simply logs and returns (does not track counters).
  */
 async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash' | 'Custom', modelId?: string, errorMessage?: string): Promise<void> {
 	const keyKvName = `key:${keyId}`;
 	const CONSECUTIVE_429_LIMIT = 3;
-	const QUOTA_EXCEEDED_MESSAGE = "You exceeded your current quota, please check your plan and billing details.";
-	const isQuotaExceeded = errorMessage && errorMessage.includes(QUOTA_EXCEEDED_MESSAGE);
+	
+	// Determine if this is a quota exceeded error by checking for the specific identifier
+	// Newer method: Check for "GenerateRequestsPerDayPerProjectPerModel" in quotaId
+	// Fallback method: Check for "quota" message
+	const isQuotaExceeded = errorMessage && 
+	    (errorMessage.includes("GenerateRequestsPerDayPerProjectPerModel") || 
+	     errorMessage.includes("You exceeded your current quota, please check your plan and billing details."));
+
+	// If it's a regular 429 (not quota exceeded), don't track counters, just log and return.
+	if (!isQuotaExceeded) {
+		console.log(`Received regular 429 for key ${keyId}. Ignoring counter, retry will be handled by caller if applicable.`);
+		return;
+	}
+
+	// --- Handle Quota Exceeded 429 ---
+	console.warn(`Received quota-exceeded 429 for key ${keyId}. Proceeding with counter logic.`);
 
 	try {
 		// Fetch current key info
 		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);
 		if (!keyInfoJson) {
-			console.warn(`Cannot handle 429: Key info not found for ID: ${keyId}`);
+			console.warn(`Cannot handle quota 429: Key info not found for ID: ${keyId}`);
 			return;
 		}
+		
 		let keyInfoData = JSON.parse(keyInfoJson) as Partial<Omit<GeminiKeyInfo, 'id'>>;
 		let consecutive429Counts = keyInfoData.consecutive429Counts || {};
 
 		// Determine the specific counter key (model ID or category string)
+		// Since we only track quota-exceeded errors now, no need for a prefix
 		let counterKey: string | undefined = undefined;
 		let needsQuotaCheck = false; // Does this model/category have a quota defined?
 
@@ -2517,31 +2534,29 @@ async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash'
 		const categoryQuotas: CategoryQuotas = (categoryQuotasJson as CategoryQuotas) || { proQuota: Infinity, flashQuota: Infinity };
 		const modelConfig = modelId ? modelsConfig[modelId] : undefined;
 
-		// 为不同类型的429创建不同的计数器前缀
-		const counterPrefix = isQuotaExceeded ? "quota:" : "regular:";
-
 		if (category === 'Custom' && modelId) {
-			counterKey = counterPrefix + modelId;
-			needsQuotaCheck = isQuotaExceeded && !!modelConfig?.dailyQuota;
+			counterKey = modelId; // Use modelId directly (no prefix needed)
+			needsQuotaCheck = !!modelConfig?.dailyQuota;
 		} else if ((category === 'Pro' || category === 'Flash') && modelId && modelConfig?.individualQuota) {
 			// Pro/Flash model *with* individual quota -> use model ID as key
-			counterKey = counterPrefix + modelId;
-			needsQuotaCheck = isQuotaExceeded && true; // Individual quota exists
+			counterKey = modelId; // Use modelId directly (no prefix needed)
+			needsQuotaCheck = true; // Individual quota exists
 		} else if (category === 'Pro') {
 			// Pro model *without* individual quota -> use category key
-			counterKey = counterPrefix + 'category:pro';
-			needsQuotaCheck = isQuotaExceeded && !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
+			counterKey = 'category:pro';
+			needsQuotaCheck = !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
 		} else if (category === 'Flash') {
 			// Flash model *without* individual quota -> use category key
-			counterKey = counterPrefix + 'category:flash';
-			needsQuotaCheck = isQuotaExceeded && !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
+			counterKey = 'category:flash';
+			needsQuotaCheck = !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
 		}
 
 		if (!counterKey) {
-			console.warn(`Could not determine counter key for key ${keyId}, category ${category}, model ${modelId}. Skipping 429 handling.`);
+			console.warn(`Could not determine counter key for quota 429 handling (key ${keyId}, category ${category}, model ${modelId}).`);
 			return;
 		}
-		if (!needsQuotaCheck && isQuotaExceeded) {
+		
+		if (!needsQuotaCheck) {
 			console.log(`Skipping quota-exceeded 429 counter for key ${keyId}, counter ${counterKey} as no relevant quota is configured.`);
 			return; // Don't count 429s if there's no quota to hit anyway
 		}
@@ -2550,33 +2565,25 @@ async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash'
 		const currentCount = (consecutive429Counts[counterKey] || 0) + 1;
 		consecutive429Counts[counterKey] = currentCount;
 
-		if (isQuotaExceeded) {
-			console.warn(`Received quota-exceeded 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
-		} else {
-			console.warn(`Received regular 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
-		}
+		console.warn(`Quota-exceeded 429 for key ${keyId}, counter ${counterKey}. Consecutive count: ${currentCount}`);
 
-		// The quota limit is enforced only when 429 errors of the quota-exhausted type consecutively reach the threshold
-		if (isQuotaExceeded && currentCount >= CONSECUTIVE_429_LIMIT) {
+		// Check if the threshold is reached
+		if (currentCount >= CONSECUTIVE_429_LIMIT) {
 			console.warn(`Consecutive quota-exceeded 429 limit (${CONSECUTIVE_429_LIMIT}) reached for key ${keyId}, counter ${counterKey}. Forcing quota limit.`);
 			// Call forceSetQuotaToLimit, passing the counterKey to reset it
 			await forceSetQuotaToLimit(keyId, env, category, modelId, counterKey);
-			// Note: forceSetQuotaToLimit now handles resetting the specific counter
+			// Note: forceSetQuotaToLimit handles resetting the specific counter
 		} else {
-			// Limit not reached or not a quota-exceeded 429, just save the updated counts
+			// Limit not reached, just save the updated counts
 			const updatedKeyInfo: Partial<Omit<GeminiKeyInfo, 'id'>> = {
 				...keyInfoData,
 				consecutive429Counts: consecutive429Counts,
 			};
 			await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
-			
-			if (!isQuotaExceeded) {
-				console.log(`Regular 429 received, only tracking count without forcing quota limit.`);
-			}
 		}
 
 	} catch (e) {
-		console.error(`Failed to handle 429 error for key ${keyId}:`, e);
+		console.error(`Failed to handle quota 429 error for key ${keyId}:`, e);
 	}
 }
 
