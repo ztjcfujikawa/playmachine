@@ -172,10 +172,9 @@ router.post('/test-gemini-key', async (req, res, next) => {
             testResponseBody = await response.json(); // Attempt to parse JSON
             isSuccess = response.ok;
 
-            if (isSuccess) {
+if (isSuccess) {
                  // Increment usage and sync to GitHub
                  await geminiKeyService.incrementKeyUsage(keyId, modelId, modelCategory);
-                 await geminiKeyService.clearKeyError(keyId);
             } else {
                  // Record 401/403 errors
                  if (testResponseStatus === 401 || testResponseStatus === 403) {
