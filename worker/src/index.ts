@@ -2494,10 +2494,10 @@ async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash'
 	const CONSECUTIVE_429_LIMIT = 3;
 	
 	// Determine if this is a quota exceeded error by checking for the specific identifier
-	// Newer method: Check for "GenerateRequestsPerDayPerProjectPerModel" in quotaId
+	// Newer method: Check for "PerDay" (case insensitive) in quotaId or error message
 	// Fallback method: Check for "quota" message
 	const isQuotaExceeded = errorMessage && 
-	    (errorMessage.includes("GenerateRequestsPerDayPerProjectPerModel") || 
+	    (errorMessage.toLowerCase().includes("perday") || 
 	     errorMessage.includes("You exceeded your current quota, please check your plan and billing details."));
 
 	// If it's a regular 429 (not quota exceeded), don't track counters, just log and return.

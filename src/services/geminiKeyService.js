@@ -752,7 +752,7 @@ async function handle429Error(keyId, category, modelId, errorDetails) {
 
     // Determine if quota exceeded based on quotaId field
     const quotaId = typeof errorDetails === 'object' && errorDetails !== null ? errorDetails.quotaId : null;
-    const isQuotaExceeded = typeof quotaId === 'string' && quotaId.includes("GenerateRequestsPerDayPerProjectPerModel");
+    const isQuotaExceeded = typeof quotaId === 'string' && quotaId.toLowerCase().includes("perday");
 
     // If it's a regular 429 (not quota exceeded), do nothing and return. Retry is handled by the caller.
     if (!isQuotaExceeded) {
