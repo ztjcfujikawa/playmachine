@@ -329,28 +329,8 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                             requestedModelId: requestedModelId // Pass modelId for subsequent use
                         };
                     } else {
-                        // For non-KEEPALIVE mode, get the response body and check if it's an empty response
-                        const clonedResponse = geminiResponse.clone(); // Clone the response so it can be read multiple times
-                        const geminiResponseData = await clonedResponse.json();
-                        
-                        // Check if it's an empty response (finishReason is OTHER and no content)
-                        const isEmptyResponse = geminiResponseData.candidates && 
-                                               geminiResponseData.candidates[0] && 
-                                               geminiResponseData.candidates[0].finishReason === "OTHER" && 
-                                               (!geminiResponseData.candidates[0].content || 
-                                                !geminiResponseData.candidates[0].content.parts || 
-                                                geminiResponseData.candidates[0].content.parts.length === 0);
-                        
-                        if (isEmptyResponse && attempt < MAX_RETRIES) {
-                            console.log(`Detected empty response (finishReason: OTHER), attempting retry #${attempt + 1} with a new key...`);
-                            // Skip this key on next attempt
-                            forceNewKey = true;
-                            continue; // Continue to the next attempt
-                        }
-                        
+                        // For non-KEEPALIVE mode (正常流式)，不要提前消费 response.body，直接返回
                         console.log(`Chat completions call completed successfully.`);
-                        
-                        // Regular handling (non-KEEPALIVE)
                         return {
                             response: geminiResponse,
                             selectedKeyId: selectedKey.id,
