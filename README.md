@@ -1,4 +1,4 @@
-# gemini-proxy-panel
+# Gemini Proxy Panel
 
 > **本项目遵循CC BY-NC 4.0协议，禁止任何形式的商业倒卖行为。**  
 This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).  
