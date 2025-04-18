@@ -1,5 +1,9 @@
 # gemini-proxy-panel
 
+> **本项目遵循CC BY-NC 4.0协议，禁止任何形式的商业倒卖行为。**  
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).  
+Commercial resale or any form of commercial use is prohibited.
+
 [**中文介绍**](./README_zh.md "Chinese Readme") <br><br>
 [***详细部署与使用教程(新手看这里)***](./doc/项目介绍.md "项目介绍") <br><br>
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/dreamhartley/gemini-proxy-panel)
