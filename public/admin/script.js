@@ -260,7 +260,7 @@ async function renderGeminiKeys(keys) {
         
         // Create collapsible grid container
         const keysGrid = document.createElement('div');
-        keysGrid.className = 'keys-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 transition-all duration-300';
+        keysGrid.className = 'keys-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 transition-all duration-300 max-h-[60vh] overflow-y-auto';
         
         // Set initial expanded/collapsed state based on key count
         const isInitiallyExpanded = totalKeys <= 6;
