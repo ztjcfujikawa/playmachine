@@ -109,7 +109,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
                         ...(openAIRequestBody.top_p !== undefined && { topP: openAIRequestBody.top_p }),
                         ...(openAIRequestBody.max_tokens !== undefined && { maxOutputTokens: openAIRequestBody.max_tokens }),
                         ...(openAIRequestBody.stop && { stopSequences: Array.isArray(openAIRequestBody.stop) ? openAIRequestBody.stop : [openAIRequestBody.stop] }),
-                        ...(thinkingBudget && { thinkingConfig: { thinkingBudget: thinkingBudget } }),
+                        ...(thinkingBudget !== undefined && { thinkingConfig: { thinkingBudget: thinkingBudget } }),
                     },
                     ...(geminiTools && { tools: geminiTools }),
                     ...(systemInstruction && { systemInstruction: systemInstruction }),
