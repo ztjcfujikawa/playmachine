@@ -17,7 +17,7 @@ const PROJECT_ID_REGEX = /^[0-9a-f]{32}$/i;
 // Default Cloudflare Gateway project ID (Replace with your actual default if needed)
 const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
 
-async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
+async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thinkingBudget) {
     // Check if KEEPALIVE mode is enabled
     const keepAliveEnabled = process.env.KEEPALIVE === '1';
     
@@ -109,6 +109,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream) {
                         ...(openAIRequestBody.top_p !== undefined && { topP: openAIRequestBody.top_p }),
                         ...(openAIRequestBody.max_tokens !== undefined && { maxOutputTokens: openAIRequestBody.max_tokens }),
                         ...(openAIRequestBody.stop && { stopSequences: Array.isArray(openAIRequestBody.stop) ? openAIRequestBody.stop : [openAIRequestBody.stop] }),
+                        ...(thinkingBudget && { thinkingConfig: { thinkingBudget: thinkingBudget } }),
                     },
                     ...(geminiTools && { tools: geminiTools }),
                     ...(systemInstruction && { systemInstruction: systemInstruction }),
