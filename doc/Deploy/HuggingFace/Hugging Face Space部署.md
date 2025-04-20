@@ -36,7 +36,7 @@
      * (可选)`KEEPALIVE`: 填入`1`启用心跳机制，以实现假流式传输。\
      详情参考: [KEEPALIVE模式介绍](../../Usage/KEEPALIVE.md)\
      ![](image/4.6.jpg)
-     * (可选)`CF_GAGEWAY`: 填入`1`启用脚本默认提供的Cloudflare AI Gateway网关转发请求，或输入您自己网关链接。\
+     * (可选)`CF_GATEWAY`: 填入`1`启用脚本默认提供的Cloudflare AI Gateway网关转发请求，或输入您自己网关链接。\
      详情参考: [CF_GATEWAY介绍](../../Usage/CF_GATEWAY.md)\
      ![](image/4.7.jpg)
      * Secrets配置完成。\
