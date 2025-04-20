@@ -1,4 +1,7 @@
 // Load environment variables from .env file
+// Manually load VERTEX from .env before doing anything else that might need it
+const vertexService = require('./services/vertexProxyService'); // Imports and triggers manual load
+
 require('dotenv').config();
 
 const express = require('express');
@@ -100,6 +103,13 @@ app.listen(port, '0.0.0.0', () => {
         console.log(`Proxy Pool: Configured (${proxyStatus.count} proxies) but DISABLED (missing 'socks-proxy-agent' dependency)`);
     } else {
         console.log(`Proxy Pool: Disabled (PROXY environment variable not set or contains no valid SOCKS5 proxies)`);
+    }
+    
+    // Log Vertex AI Status using the check function
+    if (vertexService.isVertexEnabled()) {
+        console.log(`Vertex AI: Enabled (Loaded credentials, additional [v] prefixed models available)`);
+    } else {
+        console.log(`Vertex AI: Disabled (VERTEX variable not found or invalid in .env file)`);
     }
     
     // Check if running in Hugging Face Space

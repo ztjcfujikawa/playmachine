@@ -7,6 +7,9 @@ const geminiProxyService = require('../services/geminiProxyService');
 const configService = require('../services/configService'); // For /v1/models
 const transformUtils = require('../utils/transform');
 
+// Import vertexProxyService, which now includes manual loading logic
+const vertexProxyService = require('../services/vertexProxyService');
+
 const router = express.Router();
 
 // Apply worker authentication middleware to all /v1 routes
@@ -57,6 +60,19 @@ router.get('/models', async (req, res, next) => {
         // Merge regular, search and non-thinking model lists
         modelsData = [...modelsData, ...searchModels, ...nonThinkingModels];
 
+        // If Vertex feature is enabled (via manual loading), add Vertex AI supported models
+        if (vertexProxyService.isVertexEnabled()) {
+            const vertexModels = vertexProxyService.getVertexSupportedModels().map(modelId => ({
+                id: modelId,  // Model ID including [v] prefix
+                object: "model",
+                created: Math.floor(Date.now() / 1000),
+                owned_by: "google",
+            }));
+            
+            // Add Vertex models to the list
+            modelsData = [...modelsData, ...vertexModels];
+        }
+
         res.json({ object: "list", data: modelsData });
     } catch (error) {
         console.error("Error handling /v1/models:", error);
@@ -85,13 +101,26 @@ router.post('/chat/completions', async (req, res, next) => {
             openAIRequestBody.model = actualModelId;
         }
 
-        // Call the proxy service with the optional thinkingBudget parameter
-        const result = await geminiProxyService.proxyChatCompletions(
-            openAIRequestBody,
-            workerApiKey,
-            stream,
-            thinkingBudget
-        );
+        let result;
+        
+        // Check if it's a Vertex model (with [v] prefix) and confirm Vertex feature is enabled
+        if (requestedModelId && requestedModelId.startsWith('[v]') && vertexProxyService.isVertexEnabled()) {
+            // Use Vertex proxy service to handle the request
+            console.log(`Using Vertex AI to process model: ${requestedModelId}`);
+            result = await vertexProxyService.proxyVertexChatCompletions(
+                openAIRequestBody,
+                workerApiKey,
+                stream
+            );
+        } else {
+            // Use Gemini proxy service to handle the request with optional thinkingBudget
+            result = await geminiProxyService.proxyChatCompletions(
+                openAIRequestBody,
+                workerApiKey,
+                stream,
+                thinkingBudget
+            );
+        }
 
         // Check if the service returned an error
         if (result.error) {
@@ -138,18 +167,88 @@ router.post('/chat/completions', async (req, res, next) => {
             let openBraces = 0;
             let closeBraces = 0;
 
-            // Implement a truly real-time stream processing transformer
+            // Implement stream processing transformer for both Gemini and Vertex streams
             const streamTransformer = new Transform({
                 transform(chunk, encoding, callback) {
                     try {
-                        // Decode the received data chunk
                         const chunkStr = decoder.decode(chunk, { stream: true });
-                        // Add the current chunk to the buffer
                         buffer += chunkStr;
-                        
-                        // Try to extract complete JSON objects from the buffer
-                        let startPos = -1;
-                        let endPos = -1;
+
+                        // Process based on the source (Gemini or Vertex)
+                        if (selectedKeyId === 'vertex-ai') {
+                            // Vertex stream response is a series of continuous JSON objects without newline separation
+                            // Use a method similar to Gemini to process JSON objects
+                            let startPos = -1;
+                            let endPos = -1;
+                            let bracketDepth = 0;
+                            let inString = false;
+                            let escapeNext = false;
+                            let flushed = false;
+                            
+                            // Scan the entire buffer to find complete JSON objects
+                            for (let i = 0; i < buffer.length; i++) {
+                                const char = buffer[i];
+                                
+                                // Handle characters inside strings
+                                if (inString) {
+                                    if (escapeNext) {
+                                        escapeNext = false;
+                                    } else if (char === '\\') {
+                                        escapeNext = true;
+                                    } else if (char === '"') {
+                                        inString = false;
+                                    }
+                                    continue;
+                                }
+                                
+                                // Handle characters outside strings
+                                if (char === '{') {
+                                    if (bracketDepth === 0) {
+                                        startPos = i; // Record the starting position of a new JSON object
+                                    }
+                                    bracketDepth++;
+                                } else if (char === '}') {
+                                    bracketDepth--;
+                                    if (bracketDepth === 0 && startPos !== -1) {
+                                        endPos = i;
+                                        
+                                        // Extract and process the complete JSON object
+                                        const jsonStr = buffer.substring(startPos, endPos + 1);
+                                        try {
+                                            const jsonObj = JSON.parse(jsonStr);
+                                            if (jsonObj.done) {
+                                                // console.log("Received [DONE] marker from Vertex stream."); // Removed log
+                                                // Don't send [DONE] here, wait for flush
+                                            } else {
+                                                // Wrap in SSE format and send
+                                                this.push(`data: ${JSON.stringify(jsonObj)}\n\n`);
+                                                // Try to force flush the response
+                                                if (typeof res.flush === 'function') res.flush();
+                                            }
+                                        } catch (e) {
+                                            console.error("Error parsing Vertex JSON object:", e);
+                                        }
+                                        
+                                        // Continue searching for the next object
+                                        startPos = -1;
+                                        
+                                        // Truncate the processed part
+                                        if (i + 1 < buffer.length) {
+                                            buffer = buffer.substring(endPos + 1);
+                                            i = -1; // Reset index to scan the remaining buffer from the beginning
+                                        } else {
+                                            buffer = '';
+                                            break; // Exit loop if buffer is exhausted
+                                        }
+                                    }
+                                } else if (char === '"') {
+                                    inString = true;
+                                }
+                            }
+                        } else {
+                             // Original Gemini stream processing (find raw Gemini JSON chunks)
+                            let startPos = -1;
+                            let endPos = -1;
                         let bracketDepth = 0;
                         let inString = false;
                         let escapeNext = false;
@@ -191,33 +290,32 @@ router.post('/chat/completions', async (req, res, next) => {
                                         console.error("Error parsing JSON object:", e);
                                     }
                                     
-                                    // Continue searching for the next object
-                                    startPos = -1;
-                                }
-                            } else if (char === '"') {
-                                inString = true;
-                            } else if (char === '[' && !inString && startPos === -1) {
-                                // Ignore the start marker of JSON arrays, as we process each object individually
-                                continue;
-                            } else if (char === ']' && !inString && bracketDepth === 0) {
-                                // Ignore the end marker of JSON arrays
-                                continue;
-                            } else if (char === ',') {
-                                // If there's a comma after an object, continue processing the next object
-                                continue;
-                            }
-                        }
-                        
-                        // Keep the unprocessed part (possibly an incomplete JSON object)
-                        if (startPos !== -1 && endPos !== -1 && endPos > startPos) {
-                            buffer = buffer.substring(endPos + 1);
-                        } else if (startPos !== -1) {
-                            // Has a start but no end, keep the entire object part
-                            buffer = buffer.substring(startPos);
-                        } else {
-                            // No incomplete JSON objects left, clear the buffer
-                            buffer = '';
-                        }
+                                                // Continue searching for the next object
+                                                startPos = -1;
+                                            }
+                                        } else if (char === '"') {
+                                            inString = true;
+                                        } else if (char === '[' && !inString && startPos === -1) {
+                                            // Ignore the start marker of JSON arrays, as we process each object individually
+                                            continue;
+                                        } else if (char === ']' && !inString && bracketDepth === 0) {
+                                            // Ignore the end marker of JSON arrays
+                                            continue;
+                                        } else if (char === ',') {
+                                            // If there's a comma after an object, continue processing the next object
+                                            continue;
+                                        }
+                                    }
+                                    
+                                    // Keep the unprocessed part for Gemini stream
+                                    if (startPos !== -1 && endPos !== -1 && endPos > startPos) {
+                                        buffer = buffer.substring(endPos + 1);
+                                    } else if (startPos !== -1) {
+                                        buffer = buffer.substring(startPos);
+                                    } else {
+                                        buffer = '';
+                                    }
+                            } // End of else (Gemini stream processing)
                         
                         callback();
                     } catch (e) {
@@ -228,22 +326,81 @@ router.post('/chat/completions', async (req, res, next) => {
                 
                 flush(callback) {
                     try {
-                        // Process any remaining buffer data
+                // Handling the remaining buffer
+                if (buffer.trim()) {
+                     if (selectedKeyId === 'vertex-ai') {
                         if (buffer.trim()) {
-                            try {
-                                // Try to parse the last potentially incomplete object
-                                const jsonObj = JSON.parse(buffer);
-                                processGeminiObject(jsonObj, this);
-                            } catch (e) {
-                                console.debug("Could not parse final buffer:", buffer);
+                            let startPos = -1;
+                            let endPos = -1;
+                            let bracketDepth = 0;
+                            let inString = false;
+                            let escapeNext = false;
+                            
+                            for (let i = 0; i < buffer.length; i++) {
+                                const char = buffer[i];
+                                
+                                if (inString) {
+                                    if (escapeNext) {
+                                        escapeNext = false;
+                                    } else if (char === '\\') {
+                                        escapeNext = true;
+                                    } else if (char === '"') {
+                                        inString = false;
+                                    }
+                                    continue;
+                                }
+                                
+                                if (char === '{') {
+                                    if (bracketDepth === 0) {
+                                        startPos = i;
+                                    }
+                                    bracketDepth++;
+                                } else if (char === '}') {
+                                    bracketDepth--;
+                                    if (bracketDepth === 0 && startPos !== -1) {
+                                        endPos = i;
+                                        
+                                        try {
+                                            const jsonStr = buffer.substring(startPos, endPos + 1);
+                                            const jsonObj = JSON.parse(jsonStr);
+                                            if (!jsonObj.done) { // Avoid duplicate DONE
+                                                this.push(`data: ${JSON.stringify(jsonObj)}\n\n`);
+                                            }
+                                        } catch (e) {
+                                            console.debug("Could not parse Vertex buffer JSON:", e);
+                                        }
+                                        
+                                        // Update the buffer and reset the index
+                                        if (endPos + 1 < buffer.length) {
+                                            buffer = buffer.substring(endPos + 1);
+                                            i = -1; // Reset index
+                                        } else {
+                                            buffer = '';
+                                            break;
+                                        }
+                                    }
+                                } else if (char === '"') {
+                                    inString = true;
+                                }
                             }
                         }
+                     } else {
+                                // Try parsing remaining Gemini JSON object
+                                try {
+                                    const jsonObj = JSON.parse(buffer);
+                                    processGeminiObject(jsonObj, this); // Use existing Gemini processing
+                                } catch (e) {
+                                    console.debug("Could not parse final Gemini buffer:", buffer, e);
+                                }
+                             }
+                        }
                         
-                        // Send the final [DONE] event
-                        this.push('data: [DONE]\n\n');
-                        callback();
-                    } catch (e) {
-                        console.error("Error in stream flush:", e);
+                        // Always send the final [DONE] event
+                                                // console.log("Stream transformer flushing, sending [DONE]."); // Removed log
+                                                this.push('data: [DONE]\n\n');
+                                                callback();
+                                            } catch (e) {
+                                                console.error("Error in stream flush:", e); // Keep error log in English
                         callback(e);
                     }
                 }
@@ -416,27 +573,24 @@ router.post('/chat/completions', async (req, res, next) => {
                 // Pipe keepAliveStream to the response
                 keepAliveStream.pipe(res);
             } else {
-                // Standard Gemini stream response is still processed by the transformer
-                geminiResponse.body.pipe(streamTransformer).pipe(res);
+                 // Standard Gemini and Vertex streams are now processed by the updated transformer
+                 console.log(`Piping ${selectedKeyId === 'vertex-ai' ? 'Vertex' : 'Gemini'} stream through transformer.`);
+                 geminiResponse.body.pipe(streamTransformer).pipe(res);
             }
 
-            // Register error handling - only needed in non-keepalive mode
+            // Register error handling - needed for non-keepalive mode
             if (!result.isKeepAlive) {
-                // Only register these error handlers in standard streaming mode
-                // Handle errors on the source stream
+                // Handle errors on the source stream (Gemini or Vertex)
                 geminiResponse.body.on('error', (err) => {
-                    console.error('Error reading stream from Gemini:', err);
-                    // Try to end the response gracefully if headers not sent
+                    console.error(`Error reading stream from upstream (${selectedKeyId}):`, err);
                     if (!res.headersSent) {
                         res.status(500).json({ error: { message: 'Error reading stream from upstream API.' } });
                     } else {
-                        // If headers sent, try to signal error within the stream (though might be too late)
-                        // streamTransformer should ideally handle errors during transformation
                         res.end(); // End the connection
                     }
                 });
 
-                // Handle errors on the transformer stream - mainly for standard streaming mode
+                // Handle errors on the transformer stream
                 streamTransformer.on('error', (err) => {
                     console.error('Error in stream transformer:', err);
                     if (!res.headersSent) {
@@ -455,11 +609,19 @@ router.post('/chat/completions', async (req, res, next) => {
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
             try {
-                 const geminiJson = await geminiResponse.json();
-                 const openaiJsonString = transformUtils.transformGeminiResponseToOpenAI(geminiJson, requestedModelId);
-                 // Use Gemini's original status code if available and OK, otherwise default to 200
-                 res.status(geminiResponse.ok ? geminiResponse.status : 200).send(openaiJsonString);
-                 console.log(`Non-stream request completed for key ${selectedKeyId}, status: ${geminiResponse.status}`);
+                if (selectedKeyId === 'vertex-ai') {
+                    // Vertex service already transformed the response to OpenAI format
+                    const openaiJson = await geminiResponse.json(); // Get the pre-transformed JSON
+                    res.status(geminiResponse.status || 200).json(openaiJson); // Send it directly
+                    console.log(`Non-stream Vertex request completed, status: ${geminiResponse.status || 200}`);
+                } else {
+                    // Original Gemini service response handling
+                    const geminiJson = await geminiResponse.json(); // Parse the raw upstream Gemini JSON
+                    const openaiJsonString = transformUtils.transformGeminiResponseToOpenAI(geminiJson, requestedModelId); // Transform it
+                    // Use Gemini's original status code if available and OK, otherwise default to 200
+                    res.status(geminiResponse.ok ? geminiResponse.status : 200).send(openaiJsonString);
+                    console.log(`Non-stream Gemini request completed for key ${selectedKeyId}, status: ${geminiResponse.status}`);
+                }
             } catch (jsonError) {
                  console.error("Error parsing Gemini non-stream JSON response:", jsonError);
                  // Check if response text might give clues

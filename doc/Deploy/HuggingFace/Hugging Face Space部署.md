@@ -39,6 +39,9 @@
      * (可选)`CF_GATEWAY`: 填入`1`启用脚本默认提供的Cloudflare AI Gateway网关转发请求，或输入您自己网关链接。\
      详情参考: [CF_GATEWAY介绍](../../Usage/CF_GATEWAY.md)\
      ![](image/4.7.jpg)
+     * (可选)`VERTEX`: 填入JSON格式的服务账号API密钥可以启用Vertex代理功能。\
+     详情参考: [Vertex代理配置](../../Usage/Vertex/Vertex代理配置.md)\
+     ![](image/4.8.jpg)
      * Secrets配置完成。\
      ![](image/5.0.jpg)
 
