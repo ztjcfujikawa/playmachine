@@ -33,7 +33,7 @@ function loadVertexEnvManual(envFilePath = ".env") {
     try {
         // Check if file exists synchronously
         if (!fsSync.existsSync(envFilePath)) {
-            console.info(`Manual .env loading: ${envFilePath} not found.`); // Keep info log in English
+            console.info(`Manual .env loading: ${envFilePath} not found.`); 
             VERTEX_JSON_STRING = null;
             return;
         }
@@ -79,13 +79,13 @@ function loadVertexEnvManual(envFilePath = ".env") {
                 // Validate JSON before assigning
                 JSON.parse(fullJsonString);
                 VERTEX_JSON_STRING = fullJsonString;
-                console.info("Manual .env loading: Successfully parsed multi-line VERTEX JSON."); // Keep info log in English
+                console.info("Manual .env loading: Successfully parsed multi-line VERTEX JSON."); 
             } catch (jsonError) {
                 console.error(`Manual .env loading: Extracted 'VERTEX' content from ${envFilePath} is not valid JSON: ${jsonError}. Content preview: ${fullJsonString.substring(0, 100)}...`); // Keep error log in English
                 VERTEX_JSON_STRING = null;
             }
         } else {
-             console.info(`Manual .env loading: VERTEX variable not found in ${envFilePath}.`); // Keep info log in English
+             console.info(`Manual .env loading: VERTEX variable not found in ${envFilePath}.`); 
              VERTEX_JSON_STRING = null;
         }
     } catch (error) {
@@ -113,7 +113,7 @@ async function initializeVertexCredentials() {
             JSON.parse(vertexJsonFromEnv);
             potentialJsonString = vertexJsonFromEnv;
             loadedFrom = 'process.env';
-            console.info("Using VERTEX credentials from process.env."); // Keep info log in English
+            console.info("Using VERTEX credentials from process.env."); 
         } catch (jsonError) {
             console.warn(`Manual .env loading: VERTEX variable from process.env is not valid JSON: ${jsonError}. Falling back to .env file.`); // Keep warn log in English
             potentialJsonString = null; // Invalidate if parse fails
@@ -942,7 +942,7 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
             try {
                 const dirPath = path.dirname(tempCredentialsPath);
                 await fs.rm(dirPath, { recursive: true, force: true });
-                console.info(`Cleaned up temporary credentials directory: ${dirPath}`); // Keep info log in English
+                console.info(`Cleaned up temporary credentials directory: ${dirPath}`); 
             } catch (e) {
                 console.warn(`Failed to delete temporary credentials directory: ${e}`); // Keep warn log in English
             }
