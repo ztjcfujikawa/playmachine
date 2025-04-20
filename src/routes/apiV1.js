@@ -42,8 +42,23 @@ router.get('/models', async (req, res, next) => {
                 owned_by: "google",
             }));
         
-        // Merge regular and search model lists
-        modelsData = [...modelsData, ...searchModels];
+        // Add non-thinking versions for gemini-2.5-flash-preview models
+        const nonThinkingModels = Object.keys(modelsConfig)
+            .filter(modelId => 
+                // Currently only gemini-2.5-flash-preview supports thinkingBudget
+                modelId.includes('gemini-2.5-flash-preview') && 
+                // Exclude models that are already non-thinking versions
+                !modelId.endsWith(':non-thinking')
+            )
+            .map(modelId => ({
+                id: `${modelId}:non-thinking`,
+                object: "model",
+                created: Math.floor(Date.now() / 1000),
+                owned_by: "google",
+            }));
+        
+        // Merge regular, search and non-thinking model lists
+        modelsData = [...modelsData, ...searchModels, ...nonThinkingModels];
 
         // If Vertex feature is enabled (via manual loading), add Vertex AI supported models
         if (vertexProxyService.isVertexEnabled()) {
@@ -71,8 +86,21 @@ router.post('/chat/completions', async (req, res, next) => {
     const workerApiKey = req.workerApiKey; // Attached by requireWorkerAuth middleware
     const stream = openAIRequestBody?.stream ?? false;
     const requestedModelId = openAIRequestBody?.model; // Keep track for transformations
-
+    
     try {
+        // Check if this is a non-thinking model request
+        const isNonThinking = requestedModelId?.endsWith(':non-thinking');
+        // Remove the suffix for actual model lookup, but keep original for response
+        const actualModelId = isNonThinking ? requestedModelId.replace(':non-thinking', '') : requestedModelId;
+        
+        // Set thinkingBudget to 0 for non-thinking models
+        const thinkingBudget = isNonThinking ? 0 : undefined;
+        
+        // If model was modified, update the request body with the actual model ID
+        if (isNonThinking) {
+            openAIRequestBody.model = actualModelId;
+        }
+
         let result;
         
         // Check if it's a Vertex model (with [v] prefix) and confirm Vertex feature is enabled
@@ -85,11 +113,12 @@ router.post('/chat/completions', async (req, res, next) => {
                 stream
             );
         } else {
-            // Use Gemini proxy service to handle the request
+            // Use Gemini proxy service to handle the request with optional thinkingBudget
             result = await geminiProxyService.proxyChatCompletions(
                 openAIRequestBody,
                 workerApiKey,
-                stream
+                stream,
+                thinkingBudget
             );
         }
 
