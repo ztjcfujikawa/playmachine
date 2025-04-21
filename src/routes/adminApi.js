@@ -62,7 +62,7 @@ router.delete('/gemini-keys/:id', async (req, res, next) => {
 });
 
 // Base Gemini API URL
-const BASE_GEMINI_URL = 'https://generativelanguage.googleapis.com';
+const BASE_GEMINI_URL = process.env.GEMINI_BASE_URL;
 // Cloudflare Gateway base path
 const CF_GATEWAY_BASE = 'https://gateway.ai.cloudflare.com/v1';
 // Project ID regex pattern - 32 character hex string
