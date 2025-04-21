@@ -12,6 +12,8 @@ export interface Env {
 	KEEPALIVE_ENABLED?: string; // Added for keepalive feature
 }
 
+const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com';
+
 // --- Session Constants ---
 const SESSION_COOKIE_NAME = '__session';
 const SESSION_DURATION_SECONDS = 1 * 60 * 60; 
@@ -807,7 +809,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				const querySeparator = actualStreamMode ? '?alt=sse&' : '?'; // Use alt=sse only if actually streaming to Gemini
 
 				// For -search models, use the original model name
-				const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${actualModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
+				const geminiUrl = `${GEMINI_BASE_URL}/v1beta/models/${actualModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
 
 				const geminiRequestHeaders = new Headers();
 				geminiRequestHeaders.set('Content-Type', 'application/json');
@@ -1175,7 +1177,7 @@ async function handleAdminGeminiModels(request: Request, env: Env, ctx: Executio
   // Use the available key to request Gemini models list
   try {
     // Corrected URL and authentication method (using ?key= query parameter)
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${selectedKey.key}`;
+    const geminiUrl = `${GEMINI_BASE_URL}/v1beta/models?key=${selectedKey.key}`;
     const response = await fetch(geminiUrl, {
       method: 'GET',
       headers: {
@@ -1286,7 +1288,7 @@ async function handleTestGeminiKey(request: Request, env: Env, ctx: ExecutionCon
 			contents: [{ role: "user", parts: [{ text: "Hi" }] }],
 		};
 
-		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${body.modelId}:generateContent?key=${apiKey}`;
+		const geminiUrl = `${GEMINI_BASE_URL}/v1beta/models/${body.modelId}:generateContent?key=${apiKey}`;
 
 		const response = await fetch(geminiUrl, {
 			method: 'POST',
