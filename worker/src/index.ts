@@ -12,7 +12,7 @@ export interface Env {
 	KEEPALIVE_ENABLED?: string; // Added for keepalive feature
 }
 
-const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL;
+const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com';
 
 // --- Session Constants ---
 const SESSION_COOKIE_NAME = '__session';

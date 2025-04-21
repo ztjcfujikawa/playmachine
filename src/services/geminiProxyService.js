@@ -9,7 +9,7 @@ const proxyPool = require('../utils/proxyPool'); // Import the new proxy pool mo
 
 
 // Base Gemini API URL
-const BASE_GEMINI_URL = process.env.GEMINI_BASE_URL;
+const BASE_GEMINI_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com';
 // Cloudflare Gateway base path
 const CF_GATEWAY_BASE = 'https://gateway.ai.cloudflare.com/v1';
 // Project ID regex pattern - 32 character hex string
