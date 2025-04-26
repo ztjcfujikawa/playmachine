@@ -2523,7 +2523,7 @@ async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash'
 		let consecutive429Counts = keyInfoData.consecutive429Counts || {};
 
 		// Determine the specific counter key (model ID or category string)
-		// Since we only track quota-exceeded errors now, no need for a prefix
+		// Use keyId as prefix to ensure each key has its own independent counter
 		let counterKey: string | undefined = undefined;
 		let needsQuotaCheck = false; // Does this model/category have a quota defined?
 
@@ -2537,19 +2537,19 @@ async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash'
 		const modelConfig = modelId ? modelsConfig[modelId] : undefined;
 
 		if (category === 'Custom' && modelId) {
-			counterKey = modelId; // Use modelId directly (no prefix needed)
+			counterKey = `${keyId}-${modelId}`; // Prefix with keyId for uniqueness
 			needsQuotaCheck = !!modelConfig?.dailyQuota;
 		} else if ((category === 'Pro' || category === 'Flash') && modelId && modelConfig?.individualQuota) {
 			// Pro/Flash model *with* individual quota -> use model ID as key
-			counterKey = modelId; // Use modelId directly (no prefix needed)
+			counterKey = `${keyId}-${modelId}`; // Prefix with keyId for uniqueness
 			needsQuotaCheck = true; // Individual quota exists
 		} else if (category === 'Pro') {
 			// Pro model *without* individual quota -> use category key
-			counterKey = 'category:pro';
+			counterKey = `${keyId}-category:pro`; // Prefix with keyId for uniqueness
 			needsQuotaCheck = !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
 		} else if (category === 'Flash') {
 			// Flash model *without* individual quota -> use category key
-			counterKey = 'category:flash';
+			counterKey = `${keyId}-category:flash`; // Prefix with keyId for uniqueness
 			needsQuotaCheck = !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
 		}
 
