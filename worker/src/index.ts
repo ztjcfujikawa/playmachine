@@ -668,9 +668,13 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 			workerApiKey ? env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY) : Promise.resolve(null) // Fetches string or null
 		]);
 
-		modelInfo = modelsConfig?.[requestedModelId];
+		// 统一用actualModelId查找模型配置
+		const isSearchModel = requestedModelId.endsWith('-search');
+		const actualModelId = isSearchModel ? requestedModelId.replace('-search', '') : requestedModelId;
+
+		modelInfo = modelsConfig?.[actualModelId];
 		if (!modelInfo) {
-			return new Response(JSON.stringify({ error: `Model '${requestedModelId}' is not configured.` }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
+			return new Response(JSON.stringify({ error: `Model '${actualModelId}' is not configured.` }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders() } });
 		}
 		modelCategory = modelInfo.category;
 
