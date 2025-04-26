@@ -881,6 +881,9 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 						...corsHeaders()
 					});
 
+					// Always use the original requestedModelId (with -search suffix if present) for responses to client
+					const responseModelId = requestedModelId;
+
 					// --- KEEPALIVE MODE ---
 					if (useKeepAlive) {
 						const geminiJson = await geminiResponse.json(); // Get full response (since actualStreamMode was false)
@@ -925,8 +928,8 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 									console.log("Initial keepalive chunk sent.");
 									keepAliveTimer = setTimeout(sendKeepAlive, 5000);
 
-									// Transform the complete Gemini response
-									const openaiResponseObject = transformGeminiResponseToOpenAIObject(geminiJson, requestedModelId!);
+									// Transform the complete Gemini response - use original model ID with search suffix if present
+									const openaiResponseObject = transformGeminiResponseToOpenAIObject(geminiJson, responseModelId);
 
 									// Extract necessary parts
 									const finalMessage = openaiResponseObject?.choices?.[0]?.message;
@@ -1020,7 +1023,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 												continue;
 											}
 											const jsonData = JSON.parse(trimmedData);
-											const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
+											const openaiChunkStr = transformGeminiStreamChunk(jsonData, responseModelId);
 											if (openaiChunkStr) controller.enqueue(new TextEncoder().encode(openaiChunkStr));
 										} catch (e) {
 											console.error("Error parsing/transforming stream line:", line, e);
@@ -1039,7 +1042,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 										const trimmedData = buffer.substring(6).trim();
 										if (trimmedData.length > 0 && trimmedData !== '[DONE]') {
 											const jsonData = JSON.parse(trimmedData);
-											const openaiChunkStr = transformGeminiStreamChunk(jsonData, requestedModelId!);
+											const openaiChunkStr = transformGeminiStreamChunk(jsonData, responseModelId);
 											if (openaiChunkStr) controller.enqueue(new TextEncoder().encode(openaiChunkStr));
 										}
 									} catch (e) {
@@ -1076,7 +1079,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 						}
 						
 						// Use the object transformation function
-						const openaiJsonObject = transformGeminiResponseToOpenAIObject(geminiJson, requestedModelId!);
+						const openaiJsonObject = transformGeminiResponseToOpenAIObject(geminiJson, responseModelId);
 						return new Response(JSON.stringify(openaiJsonObject), { status: 200, headers: responseHeaders });
 					}
 					// --- ERROR: STREAM EXPECTED BUT NO BODY ---
