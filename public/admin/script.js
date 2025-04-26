@@ -92,7 +92,8 @@ function hideError(container = errorMessageDiv) {
     }
 
     // Generic API fetch function (using cookie auth now)
-    async function apiFetch(endpoint, options = {}) {
+    // 新增 suppressGlobalError 参数，允许调用方控制是否全局报错
+    async function apiFetch(endpoint, options = {}, suppressGlobalError = false) {
         showLoading();
         hideError();
         hideError(categoryQuotasErrorDiv);
@@ -176,6 +177,9 @@ function hideError(container = errorMessageDiv) {
             return data;
         } catch (error) {
             console.error('API Fetch Error:', error);
+            if (suppressGlobalError) {
+                throw error;
+            }
             if (endpoint === '/category-quotas') {
                 showError(error.message || 'An unknown error occurred.', categoryQuotasErrorDiv, categoryQuotasErrorDiv);
             } else {
@@ -609,7 +613,7 @@ async function renderGeminiKeys(keys) {
             });
         });
 
-        // Add run test button click event (no changes needed here)
+        // Add run test button click event（修正：测试报错只显示在测试区域）
         document.querySelectorAll('.run-test-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const testSection = e.target.closest('.test-model-section');
@@ -627,26 +631,33 @@ async function renderGeminiKeys(keys) {
                 resultDiv.classList.remove('hidden');
                 resultPre.textContent = 'Testing...';
 
-                // Send test request
-                const result = await apiFetch('/test-gemini-key', {
-                    method: 'POST',
-                    body: JSON.stringify({ keyId, modelId })
-                });
+                // Send test request，捕获异常并只显示在测试区域
+                let result = null;
+                try {
+                    result = await apiFetch('/test-gemini-key', {
+                        method: 'POST',
+                        body: JSON.stringify({ keyId, modelId })
+                    }, true); // suppressGlobalError = true
 
-                if (result) {
-                    const formattedContent = typeof result.content === 'object'
-                        ? JSON.stringify(result.content, null, 2)
-                        : result.content;
+                    if (result) {
+                        const formattedContent = typeof result.content === 'object'
+                            ? JSON.stringify(result.content, null, 2)
+                            : result.content;
 
-                    if (result.success) {
-                        resultPre.textContent = `Test Passed!\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
-                        resultPre.className = 'text-xs bg-green-50 text-green-800 p-2 rounded overflow-x-auto';
+                        if (result.success) {
+                            resultPre.textContent = `Test Passed!\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
+                            resultPre.className = 'text-xs bg-green-50 text-green-800 p-2 rounded overflow-x-auto';
+                        } else {
+                            resultPre.textContent = `Test Failed.\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
+                            resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
+                        }
                     } else {
-                        resultPre.textContent = `Test Failed.\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
+                        resultPre.textContent = 'Test failed: No response from server';
                         resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                     }
-                } else {
-                    resultPre.textContent = 'Test failed: No response from server';
+                } catch (error) {
+                    // 只在测试区域显示错误
+                    resultPre.textContent = `Test failed: ${error.message || 'Unknown error'}`;
                     resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                 }
             });
