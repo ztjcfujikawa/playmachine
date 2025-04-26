@@ -808,7 +808,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 				const apiAction = actualStreamMode ? 'streamGenerateContent' : 'generateContent';
 				const querySeparator = actualStreamMode ? '?alt=sse&' : '?'; // Use alt=sse only if actually streaming to Gemini
 
-				// For -search models, use the original model name
+				// Always use actualModelId (without -search suffix) for the API request
 				const geminiUrl = `${GEMINI_BASE_URL}/v1beta/models/${actualModelId}:${apiAction}${querySeparator}key=${selectedKey.key}`;
 
 				const geminiRequestHeaders = new Headers();
