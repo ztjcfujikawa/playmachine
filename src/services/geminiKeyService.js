@@ -785,22 +785,23 @@ async function handle429Error(keyId, category, modelId, errorDetails) {
 
         let consecutive429Counts = JSON.parse(keyRow.consecutive_429_counts || '{}');
 
-        // Determine the counter key (no prefix needed anymore) and if a relevant quota exists
+        // Determine the counter key and if a relevant quota exists
+        // Use keyId as prefix to ensure each key has its own independent counter
         let counterKey = undefined;
         let needsQuotaCheck = false; // Still useful to check if a quota is actually configured
         const modelConfig = modelId ? modelsConfig[modelId] : undefined;
 
         if (category === 'Custom' && modelId) {
-            counterKey = modelId; // Use modelId directly
+            counterKey = `${keyId}-${modelId}`; // Prefix with keyId for uniqueness
             needsQuotaCheck = !!modelConfig?.dailyQuota;
         } else if ((category === 'Pro' || category === 'Flash') && modelId && modelConfig?.individualQuota) {
-            counterKey = modelId; // Use modelId directly
+            counterKey = `${keyId}-${modelId}`; // Prefix with keyId for uniqueness
             needsQuotaCheck = true; // Individual quota exists
         } else if (category === 'Pro') {
-            counterKey = 'category:pro'; // Use category identifier
+            counterKey = `${keyId}-category:pro`; // Prefix with keyId for uniqueness
             needsQuotaCheck = !!categoryQuotas?.proQuota && isFinite(categoryQuotas.proQuota);
         } else if (category === 'Flash') {
-            counterKey = 'category:flash'; // Use category identifier
+            counterKey = `${keyId}-category:flash`; // Prefix with keyId for uniqueness
             needsQuotaCheck = !!categoryQuotas?.flashQuota && isFinite(categoryQuotas.flashQuota);
         }
 
