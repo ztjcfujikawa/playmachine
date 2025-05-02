@@ -11,8 +11,7 @@ interface MemoryCache {
 export class KVSyncManager {
   private static instance: KVSyncManager;
   private memoryCache: MemoryCache = {};
-  private pendingSync: boolean = false;
-  private syncTimer: number | null = null;
+  private lastSyncTime: number = 0; // 上次同步时间戳
   private syncDelay: number = 300000; // 5分钟延迟
 
   // 单例模式
@@ -100,50 +99,27 @@ export class KVSyncManager {
     return await namespace.list(options);
   }
 
-  // 调度同步操作
+  // 调度同步操作 - 基于时间戳检查
   private async scheduleSync(): Promise<boolean> {
-    // 如果已经有一个同步被调度，只标记为pendingSync
-    if (this.syncTimer !== null) {
-      console.log('[KVSync] 同步已调度。标记为待处理。');
-      this.pendingSync = true;
+    const currentTime = Date.now();
+    
+    // 检查是否已经超过设定的延迟时间(syncDelay)
+    if (currentTime - this.lastSyncTime < this.syncDelay) {
+      // 如果未达到同步时间间隔，记录日志并返回
+      console.log(`[KVSync] 距离上次同步未满${this.syncDelay / 1000}秒，跳过本次同步`);
       return true;
     }
     
-    // 调度新的同步
-    console.log(`[KVSync] 调度KV同步，延迟${this.syncDelay / 1000}秒`);
-    this.pendingSync = true;
-    
-    // 使用setTimeout而不是setInterval，因为我们需要在完成后重新调度
-    // 注意：在真实的Workers环境中，这需要使用waitUntil或其他机制保证执行
-    this.syncTimer = setTimeout(async () => {
-      // 重置标志
-      this.pendingSync = false;
-      const currentTimer = this.syncTimer;
-      this.syncTimer = null;
-      
-      console.log('[KVSync] 开始KV同步...');
-      try {
-        await this.syncKVs();
-        console.log('[KVSync] KV同步完成');
-        
-        // 如果有待处理的同步，再次调度
-        if (this.pendingSync) {
-          this.scheduleSync();
-        }
-      } catch (error) {
-        console.error('[KVSync] KV同步过程中出错:', error);
-        
-        // 即使出错也清理定时器
-        if (this.syncTimer === currentTimer) {
-          this.syncTimer = null;
-        }
-        
-        // 如果有待处理的同步，再次调度
-        if (this.pendingSync) {
-          this.scheduleSync();
-        }
-      }
-    }, this.syncDelay) as unknown as number;
+    // 已达到同步时间，立即执行同步
+    console.log('[KVSync] 开始KV同步...');
+    try {
+      await this.syncKVs();
+      // 更新最后同步时间戳
+      this.lastSyncTime = Date.now();
+      console.log('[KVSync] KV同步完成，更新同步时间戳:', this.lastSyncTime);
+    } catch (error) {
+      console.error('[KVSync] KV同步过程中出错:', error);
+    }
     
     return true;
   }
