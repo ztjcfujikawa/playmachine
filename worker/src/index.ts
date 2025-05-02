@@ -77,9 +77,17 @@ export default {
 		const url = new URL(request.url);
 		const pathname = url.pathname;
 
-		// 初始化KV命名空间
-		kvSyncManager.registerNamespace(env.GEMINI_KEYS_KV);
-		kvSyncManager.registerNamespace(env.WORKER_CONFIG_KV);
+		// 初始化KV命名空间 - 使用固定的命名空间名称而不是随机ID
+		const geminiKV = env.GEMINI_KEYS_KV;
+		const workerConfigKV = env.WORKER_CONFIG_KV;
+		
+		// 添加绑定名称以帮助命名空间识别
+		(geminiKV as any).__BINDING_NAME = "GEMINI_KEYS_KV";
+		(workerConfigKV as any).__BINDING_NAME = "WORKER_CONFIG_KV";
+		
+		// 注册命名空间
+		kvSyncManager.registerNamespace(geminiKV);
+		kvSyncManager.registerNamespace(workerConfigKV);
 
 		try {
 			// API endpoint for OpenAI compatibility

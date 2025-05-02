@@ -147,9 +147,34 @@ export class KVSyncManager {
 
   // 获取命名空间名称
   private getNamespaceName(namespace: KVNamespace): string {
-    // 由于Workers环境中无法直接获取KVNamespace的名称，
-    // 我们使用一个临时唯一ID作为名称
-    return (namespace as any).id || `namespace_${Math.random().toString(36).substring(2, 9)}`;
+    // 尝试获取绑定名称，这是确定性的而非随机生成的
+    // Worker环境中，每个KV命名空间都有对应的绑定名（如"GEMINI_KEYS_KV"）
+    if ((namespace as any).__BINDING_NAME) {
+      return (namespace as any).__BINDING_NAME;
+    }
+    
+    // 尝试从注册表中查找已存在的命名空间
+    for (const [name, ns] of Object.entries(this.namespaceRegistry)) {
+      if (ns === namespace) {
+        return name;
+      }
+    }
+    
+    // 如果还未注册，返回一个固定前缀的名称
+    // 通过使用字符串哈希而非随机数，确保同一命名空间实例在不同请求间有相同标识符
+    return `KV_NS_${this.objectToHashString(namespace)}`;
+  }
+  
+  // 将对象转换为哈希字符串，用于生成确定性标识符
+  private objectToHashString(obj: any): string {
+    // 简单的对象哈希算法，对同一对象生成相同字符串
+    const str = String(obj);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash = hash & hash; // 转换为32位整数
+    }
+    return Math.abs(hash).toString(36);
   }
 
   // 从名称获取命名空间（需要在使用时注入实际的命名空间）
