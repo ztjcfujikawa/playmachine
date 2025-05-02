@@ -1,3 +1,5 @@
+import { kvSyncManager } from './kvSyncManager';
+
 export interface Env {
 	// KV Namespaces
 	GEMINI_KEYS_KV: KVNamespace;
@@ -74,6 +76,10 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const pathname = url.pathname;
+
+		// 初始化KV命名空间
+		kvSyncManager.registerNamespace(env.GEMINI_KEYS_KV);
+		kvSyncManager.registerNamespace(env.WORKER_CONFIG_KV);
 
 		try {
 			// API endpoint for OpenAI compatibility
@@ -662,11 +668,11 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 	let useKeepAlive = false; // Initialize keepalive flag
 
 	try {
-		// Fetch models config and safety settings once before the loop
-		[modelsConfig, safetySettingsJson] = await Promise.all([
-			env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Promise<Record<string, ModelConfig> | null>,
-			workerApiKey ? env.WORKER_CONFIG_KV.get(KV_KEY_WORKER_KEYS_SAFETY) : Promise.resolve(null) // Fetches string or null
-		]);
+	// Fetch models config and safety settings once before the loop
+	[modelsConfig, safetySettingsJson] = await Promise.all([
+		kvSyncManager.getKV(env.WORKER_CONFIG_KV, KV_KEY_MODELS, "json") as Promise<Record<string, ModelConfig> | null>,
+		workerApiKey ? kvSyncManager.getKV(env.WORKER_CONFIG_KV, KV_KEY_WORKER_KEYS_SAFETY) : Promise.resolve(null) // Fetches string or null
+	]);
 
 		// 统一用actualModelId查找模型配置
 		const isSearchModel = requestedModelId.endsWith('-search');
@@ -2284,10 +2290,10 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 		}
 
 		// Save the next index for future requests
-		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_GEMINI_KEY_INDEX, currentIndex.toString()));
+		ctx.waitUntil(kvSyncManager.setKV(env.GEMINI_KEYS_KV, KV_KEY_GEMINI_KEY_INDEX, currentIndex.toString()));
 		
 		// Save the selected key ID for potential exclusion in case of error handling
-		ctx.waitUntil(env.GEMINI_KEYS_KV.put(KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
+		ctx.waitUntil(kvSyncManager.setKV(env.GEMINI_KEYS_KV, KV_KEY_LAST_USED_GEMINI_KEY_ID, selectedKeyId));
 		
 		console.log(`Selected Gemini Key ID via sequential round-robin: ${selectedKeyId} (next index: ${currentIndex})`);
 
@@ -2371,8 +2377,8 @@ async function incrementKeyUsage(keyId: string, env: Env, modelId?: string, cate
 			categoryUsage: categoryUsage,
 			consecutive429Counts: consecutive429Counts, // Save the (potentially reset) 429 counts
 		};
-		// Put the updated info back into KV
-		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(updatedKeyInfo));
+		// 使用 kvSyncManager 将更新后的信息写入 KV
+		await kvSyncManager.setKV(env.GEMINI_KEYS_KV, keyKvName, JSON.stringify(updatedKeyInfo));
 		console.log(`Usage for key ${keyId} updated. Total: ${updatedKeyInfo.usage}, Date: ${updatedKeyInfo.usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts: ${JSON.stringify(consecutive429Counts)}`);
 
 	} catch (e) {
@@ -2614,8 +2620,8 @@ async function recordKeyError(keyId: string, env: Env, status: 401 | 403): Promi
 		// Update the error status
 		keyInfoData.errorStatus = status;
 
-		// Put the updated info back into KV
-		await env.GEMINI_KEYS_KV.put(keyKvName, JSON.stringify(keyInfoData));
+		// 使用 kvSyncManager 将错误状态写入 KV
+		await kvSyncManager.setKV(env.GEMINI_KEYS_KV, keyKvName, JSON.stringify(keyInfoData));
 		console.log(`Recorded error status ${status} for key ${keyId}.`);
 
 	} catch (e) {
