@@ -10,8 +10,7 @@ const transformUtils = require('../utils/transform');
 
 // List of Vertex AI supported models (prefix [v] indicates it's a Vertex API model)
 const VERTEX_SUPPORTED_MODELS = [
-    "[v]gemini-2.5-pro-preview-03-25",
-    "[v]gemini-2.5-pro-exp-03-25",
+    "[v]gemini-2.5-pro-preview-05-06",
     "[v]gemini-2.0-flash-001",
     "[v]gemini-2.5-flash-preview-04-17"
 ];

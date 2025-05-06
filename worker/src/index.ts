@@ -73,6 +73,28 @@ function getTodayInLA(): string {
 
 
 export default {
+	// 处理定时任务，每30分钟执行一次数据同步
+	async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+		console.log('[Scheduled] 执行定时KV同步任务');
+		
+		// 初始化KV命名空间
+		const geminiKV = env.GEMINI_KEYS_KV;
+		const workerConfigKV = env.WORKER_CONFIG_KV;
+		
+		// 添加绑定名称以帮助命名空间识别
+		(geminiKV as any).__BINDING_NAME = "GEMINI_KEYS_KV";
+		(workerConfigKV as any).__BINDING_NAME = "WORKER_CONFIG_KV";
+		
+		// 注册命名空间
+		kvSyncManager.registerNamespace(geminiKV);
+		kvSyncManager.registerNamespace(workerConfigKV);
+		
+		// 强制执行同步，确保所有内存中的数据被写入KV
+		await kvSyncManager.forceSyncAll();
+		
+		console.log('[Scheduled] 定时KV同步任务完成');
+	},
+
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const pathname = url.pathname;

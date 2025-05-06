@@ -11,6 +11,9 @@ directory = "public"
 [observability]
 enabled = true
 
+[triggers]
+crons = ["*/30 * * * *"]
+
 [[kv_namespaces]]
 binding = "GEMINI_KEYS_KV"
 id = "123321"

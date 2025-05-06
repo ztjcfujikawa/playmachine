@@ -99,6 +99,14 @@ export class KVSyncManager {
     return await namespace.list(options);
   }
 
+  // 强制执行同步，用于定时任务或请求结束前确保数据同步
+  public async forceSyncAll(): Promise<void> {
+    console.log('[KVSync] 执行强制同步');
+    await this.syncKVs();
+    this.lastSyncTime = Date.now();
+    console.log('[KVSync] 强制同步完成，更新同步时间戳:', this.lastSyncTime);
+  }
+
   // 调度同步操作 - 基于时间戳检查
   private async scheduleSync(): Promise<boolean> {
     const currentTime = Date.now();
