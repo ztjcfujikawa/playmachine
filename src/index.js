@@ -1,8 +1,8 @@
-// Load environment variables from .env file
+// Load environment variables from .env file FIRST
+require('dotenv').config();
+
 // Manually load VERTEX from .env before doing anything else that might need it
 const vertexService = require('./services/vertexProxyService'); // Imports and triggers manual load
-
-require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
@@ -107,9 +107,14 @@ app.listen(port, '0.0.0.0', () => {
     
     // Log Vertex AI Status using the check function
     if (vertexService.isVertexEnabled()) {
-        console.log(`Vertex AI: Enabled (Loaded credentials, additional [v] prefixed models available)`);
+        // Check if we're using Express Mode
+        if (process.env.EXPRESS_API_KEY) {
+            console.log(`Vertex AI: Enabled with Express Mode (API Key authentication, additional [v] prefixed models available)`);
+        } else {
+            console.log(`Vertex AI: Enabled (Service Account credentials, additional [v] prefixed models available)`);
+        }
     } else {
-        console.log(`Vertex AI: Disabled (VERTEX variable not found or invalid in .env file)`);
+        console.log(`Vertex AI: Disabled (VERTEX variable and EXPRESS_API_KEY not found or invalid in .env file)`);
     }
     
     // Check if running in Hugging Face Space

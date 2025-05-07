@@ -5,6 +5,7 @@ const fs = require('fs').promises; // Async fs for temp file operations
 const os = require('os');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { GoogleGenAI } = require('@google/genai');
 const configService = require('./configService');
 const transformUtils = require('../utils/transform');
 
@@ -96,6 +97,7 @@ function loadVertexEnvManual(envFilePath = ".env") {
 
 // --- Initialize Credentials on Load ---
 let isVertexInitialized = false;
+let isUsingExpressMode = false; // Track if we're using Express Mode
 
 /**
  * Initializes Vertex credentials (loads JSON, creates temp file, sets env var) on service start.
@@ -103,6 +105,16 @@ let isVertexInitialized = false;
 async function initializeVertexCredentials() {
     if (isVertexInitialized) return; // Already initialized
 
+    // First check if Express Mode API Key is set (priority)
+    const expressApiKey = process.env.EXPRESS_API_KEY;
+    if (expressApiKey && typeof expressApiKey === 'string' && expressApiKey.trim()) {
+        console.info("Using Vertex AI Express Mode with API key");
+        isUsingExpressMode = true;
+        isVertexInitialized = true; // Mark as initialized
+        return; // No need for service account credentials
+    }
+
+    // If Express Mode not available, proceed with service account credentials
     const vertexJsonFromEnv = process.env.VERTEX;
     let potentialJsonString = null;
     let loadedFrom = ''; // Track where the JSON came from
@@ -536,51 +548,62 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
         isSafetyEnabled = true; // Default to enabled safety settings
     }
 
-    // Check if initialization succeeded and temporary path exists
-    if (!isVertexInitialized || !tempCredentialsPath) {
-        const errorMessage = isVertexInitialized 
-            ? "Temporary credentials path not set." 
-            : "Vertex AI service not initialized.";
+    // Check initialization status
+    if (!isVertexInitialized) {
         return {
             error: {
-                message: `Failed to process Vertex AI service account credentials: ${errorMessage}`
-            },
-            status: 500
-        };
-    }
-    // Double check after the above - this might be redundant now
-    if (!tempCredentialsPath) {
-        return {
-            error: {
-                message: "Failed to process Vertex AI service account credentials. Path is missing."
+                message: "Vertex AI service not initialized."
             },
             status: 500
         };
     }
 
-
+    let ai;
+    
     try {
-        // Dynamically import Vertex AI SDK
-        const { VertexAI } = await import('@google-cloud/vertexai');
-        
-        // Read service account file to get project_id
-        const keyFileContent = await fs.readFile(tempCredentialsPath, 'utf-8');
-        const keyFileData = JSON.parse(keyFileContent);
-        const project_id = keyFileData.project_id;
-        
-        if (!project_id) {
-            throw new Error("No project_id found in service account JSON");
+        // Initialize client based on authentication mode
+        if (isUsingExpressMode) {
+            // Express Mode with API Key
+            const expressApiKey = process.env.EXPRESS_API_KEY;
+            if (!expressApiKey) {
+                throw new Error("EXPRESS_API_KEY is not available.");
+            }
+            
+            ai = new GoogleGenAI({
+                vertexai: true,
+                apiKey: expressApiKey
+            });
+            
+            console.log("Vertex AI Client initialized with Express Mode API Key"); // Keep log in English
+        } else {
+            // Standard mode with service account
+            if (!tempCredentialsPath) {
+                return {
+                    error: {
+                        message: "Temporary credentials path not set for service account authentication."
+                    },
+                    status: 500
+                };
+            }
+            
+            // Read service account file to get project_id
+            const keyFileContent = await fs.readFile(tempCredentialsPath, 'utf-8');
+            const keyFileData = JSON.parse(keyFileContent);
+            const project_id = keyFileData.project_id;
+            
+            if (!project_id) {
+                throw new Error("No project_id found in service account JSON");
+            }
+
+            // Initialize GoogleGenAI client with Vertex AI service account configuration
+            ai = new GoogleGenAI({
+                vertexai: true,
+                project: project_id,
+                location: DEFAULT_REGION
+            });
+            
+            console.log(`Vertex AI Client initialized for project '${project_id}' in region '${DEFAULT_REGION}'.`); // Keep log in English
         }
-
-        // Initialize Vertex AI client
-        // Remove authOptions as we've set the GOOGLE_APPLICATION_CREDENTIALS environment variable
-        const vertex_ai = new VertexAI({ 
-            project: project_id, 
-            location: DEFAULT_REGION
-            // ...authOptions // Removed
-        });
-
-        console.log(`Vertex AI Client initialized for project '${project_id}' in region '${DEFAULT_REGION}'.`); // Keep log in English
 
         // Convert OpenAI format to Vertex format
         const vertexContents = await convertOpenaiMessagesToVertex(openAIRequestBody.messages);
@@ -635,14 +658,9 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
             };
         }
 
-        // Initialize generative model (only model ID needed)
-        const generativeModel = vertex_ai.getGenerativeModel({
-            model: vertexModelId
-            // safetySettings, generationConfig, tools, toolConfig should be in the request payload
-        });
-
         // Build the request payload with all parameters
         const requestPayload = {
+            model: vertexModelId,
             contents: vertexContents,
             generationConfig: generationConfig,
             safetySettings: safetySettings,
@@ -672,9 +690,8 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
             if (useKeepAlive) {
                 // KEEPALIVE mode: Use non-streaming API but respond to client in a streaming way
                 try {
-                    // Send non-streaming request to Vertex
-                    const result = await generativeModel.generateContent(requestPayload);
-                    const response = result.response;
+                    // Send non-streaming request to Vertex using the new API
+                    const response = await ai.models.generateContent(requestPayload);
                     
                     if (!response || !response.candidates || response.candidates.length === 0) {
                         // Check if blocked by safety filter
@@ -696,20 +713,55 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
                     
                     console.log(`Completed KEEPALIVE mode chat request`); // Keep log in English
                     
-                    // Return full response data, let apiV1.js handle KEEPALIVE and response sending
+                    // Return an object containing a promise for the response
+                    // This allows apiV1.js to start sending keep-alives immediately
+                    // while awaiting the actual Vertex response.
+                    const getResponsePromise = async () => {
+                        try {
+                            const response = await ai.models.generateContent(requestPayload);
+                            if (!response || !response.candidates || response.candidates.length === 0) {
+                                const promptFeedback = response?.promptFeedback;
+                                if (promptFeedback?.blockReason) {
+                                    const blockMessage = promptFeedback.blockReasonMessage || `Blocked due to ${promptFeedback.blockReason}`;
+                                    console.warn(`Request blocked by safety filters: ${blockMessage}`);
+                                    // Propagate a specific error structure
+                                    const error = new Error(`Request blocked by Vertex AI safety filters: ${blockMessage}`);
+                                    error.type = "vertex_ai_safety_filter";
+                                    error.code = "content_filter";
+                                    error.status = 400;
+                                    throw error;
+                                }
+                                throw new Error("No valid candidates received from Vertex AI.");
+                            }
+                            console.log(`Completed KEEPALIVE mode chat request to Vertex`);
+                            return response; // Return the actual Vertex response
+                        } catch (error) {
+                            console.error(`Error during Vertex AI KEEPALIVE generation (inside promise): ${error}`, error);
+                            // Re-throw or wrap error to be caught by apiV1.js
+                            const wrappedError = new Error(`Vertex AI KEEPALIVE generation failed: ${error.message}`);
+                            wrappedError.type = error.type || 'vertex_ai_error';
+                            wrappedError.status = error.status || 500;
+                            wrappedError.originalError = error;
+                            throw wrappedError;
+                        }
+                    };
+                    
                     return {
-                        response: response, // Directly return the parsed JSON data
+                        getResponsePromise: getResponsePromise(), // Execute and return the promise
                         selectedKeyId: 'vertex-ai',
                         modelCategory: 'Vertex',
-                        isKeepAlive: true, // Mark this as a KEEPALIVE mode response
-                        requestedModelId: requestedModelId // Pass modelId for later use
+                        isKeepAlive: true,
+                        requestedModelId: requestedModelId
                     };
+
                 } catch (error) {
-                    console.error(`Error during Vertex AI KEEPALIVE generation: ${error}`, error); // Keep error log in English
+                    // This catch block might be for errors *before* calling ai.models.generateContent
+                    // or if the promise construction itself fails.
+                    console.error(`Error setting up Vertex AI KEEPALIVE generation: ${error}`, error);
                     return {
                         error: {
-                            message: `Vertex AI KEEPALIVE generation failed: ${error.message}`,
-                            type: 'vertex_ai_error'
+                            message: `Vertex AI KEEPALIVE setup failed: ${error.message}`,
+                            type: 'vertex_ai_setup_error'
                         },
                         status: 500
                     };
@@ -717,7 +769,8 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
             } else {
                 // Standard streaming mode
                 try {
-                    const streamResult = await generativeModel.generateContentStream(requestPayload);
+                    // Use the new API for streaming
+                    const streamResult = await ai.models.generateContentStream(requestPayload);
                     
                     let toolCallIndex = 0; // Keep track across chunks
 
@@ -794,11 +847,22 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
                     });
 
                     // Pipe the Vertex SDK stream through our transformer
-                    // streamResult.stream is AsyncIterable<GenerateContentResponse>
-                    // We need to adapt it to a Readable stream to pipe
-                    const sdkStream = Readable.from(streamResult.stream); 
+                    // The streamResult might be structured differently based on the API mode
+                    // In standard mode: streamResult.stream is AsyncIterable<GenerateContentResponse>
+                    // In Express Mode: streamResult itself might be the iterable
+                    let sdkStream;
+                    
+                    if (streamResult.stream) {
+                        // Standard mode structure with .stream property
+                        sdkStream = Readable.from(streamResult.stream);
+                    } else if (streamResult[Symbol.asyncIterator] || streamResult[Symbol.iterator]) {
+                        // Express Mode might return the iterator directly
+                        sdkStream = Readable.from(streamResult);
+                    } else {
+                        throw new Error("Unexpected response format from Vertex AI streaming API");
+                    }
+                    
                     const outputStream = sdkStream.pipe(vertexTransformer);
-
 
                     return {
                         response: { body: outputStream }, // Return the transform stream directly
@@ -820,8 +884,8 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
         } else {
             // Non-streaming response
             try {
-                const result = await generativeModel.generateContent(requestPayload);
-                const response = result.response;
+                // Use the new API for non-streaming
+                const response = await ai.models.generateContent(requestPayload);
 
                 if (!response || !response.candidates || response.candidates.length === 0) {
                     // Check if blocked by safety filter
@@ -958,19 +1022,21 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
 }
 
 /**
- * Gets the list of Vertex supported models (only if manually loaded successfully).
+ * Gets the list of Vertex supported models.
  * @returns {Array<string>} Array of supported model IDs.
  */
 function getVertexSupportedModels() {
-    return VERTEX_JSON_STRING ? VERTEX_SUPPORTED_MODELS : [];
+    // Return supported models if either authentication method is available
+    return (isUsingExpressMode || VERTEX_JSON_STRING) ? VERTEX_SUPPORTED_MODELS : [];
 }
 
 /**
- * Checks if the Vertex feature is enabled (based on manually loaded variable).
+ * Checks if the Vertex feature is enabled (based on credentials or API key).
  * @returns {boolean} True if Vertex AI is enabled, false otherwise.
  */
 function isVertexEnabled() {
-    return !!VERTEX_JSON_STRING;
+    // Either service account JSON or Express API Key enables Vertex
+    return !!VERTEX_JSON_STRING || !!process.env.EXPRESS_API_KEY;
 }
 
 module.exports = {

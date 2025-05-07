@@ -130,7 +130,9 @@ router.post('/chat/completions', async (req, res, next) => {
         }
 
         // Destructure the successful result
-        const { response: geminiResponse, selectedKeyId, modelCategory } = result;
+        // For KEEPALIVE, `result.response` might be undefined initially if we change it,
+        // but `result.getResponsePromise` will exist.
+        const { response: geminiResponse, selectedKeyId, modelCategory, getResponsePromise } = result;
 
         // --- Handle Response ---
 
@@ -215,18 +217,35 @@ router.post('/chat/completions', async (req, res, next) => {
                                         // Extract and process the complete JSON object
                                         const jsonStr = buffer.substring(startPos, endPos + 1);
                                         try {
-                                            const jsonObj = JSON.parse(jsonStr);
-                                            if (jsonObj.done) {
-                                                // console.log("Received [DONE] marker from Vertex stream."); // Removed log
-                                                // Don't send [DONE] here, wait for flush
+                                            // Check if it's the 'done' marker from vertexProxyService's flush
+                                            // We only need to parse if we suspect it might be the done object.
+                                            // Otherwise, jsonStr is already the stringified chunk we want.
+                                            if (jsonStr.includes('"done":true')) { // Quick check
+                                                try {
+                                                    const jsonObj = JSON.parse(jsonStr);
+                                                    if (jsonObj.done) {
+                                                        // This is the '{"done":true}' from vertexProxyService's flush.
+                                                        // The main flush of apiV1's transformer will send 'data: [DONE]\n\n'. So, ignore this one.
+                                                    } else {
+                                                        // It wasn't the done object, but was parsable. Send it.
+                                                        this.push(`data: ${jsonStr}\n\n`);
+                                                        if (typeof res.flush === 'function') res.flush();
+                                                    }
+                                                } catch (e) {
+                                                    // Parsing failed, but it might still be a valid (non-done) chunk.
+                                                    // This case should ideally not happen if vertexProxyService sends valid JSONs.
+                                                    console.error("Error parsing potential Vertex JSON object:", e, "Original string:", jsonStr);
+                                                    this.push(`data: ${jsonStr}\n\n`); // Send as is if parsing fails but wasn't 'done'
+                                                    if (typeof res.flush === 'function') res.flush();
+                                                }
                                             } else {
-                                                // Wrap in SSE format and send
-                                                this.push(`data: ${JSON.stringify(jsonObj)}\n\n`);
-                                                // Try to force flush the response
+                                                // Not the 'done' marker, so jsonStr is a data chunk.
+                                                this.push(`data: ${jsonStr}\n\n`);
                                                 if (typeof res.flush === 'function') res.flush();
                                             }
                                         } catch (e) {
-                                            console.error("Error parsing Vertex JSON object:", e);
+                                            // This outer catch handles errors from buffer.substring or other unexpected issues
+                                            console.error("Error processing Vertex JSON chunk:", e, "Original string:", jsonStr);
                                         }
                                         
                                         // Continue searching for the next object
@@ -441,161 +460,111 @@ router.post('/chat/completions', async (req, res, next) => {
                 // May need to handle other response types...
             }
 
-            // Check if this is a keepalive special response or normal streaming
-            if (result.isKeepAlive) { // Flag set by keepalive mode (non-streaming converted to streaming)
-                const geminiResponseData = result.response; // Directly get the parsed JSON data
-                const requestedModelId = result.requestedModelId;
+            // Check if this is a KEEPALIVE special response or normal streaming
+            if (result.isKeepAlive && getResponsePromise) {
+                const requestedModelIdFromKeepAlive = result.requestedModelId; // Use the one from the result object
+                console.log(`Processing KEEPALIVE mode response for model ${requestedModelIdFromKeepAlive} (will await Vertex)`);
 
-                console.log(`Processing KEEPALIVE mode response`);
+                const keepAliveSseStream = new Readable({ read() {} });
+                keepAliveSseStream.pipe(res); // Pipe to response immediately to send headers and initial keep-alives
 
-                // Create a Node.js Readable stream to send to the client
-                const keepAliveStream = new Readable({
-                    read() {} // Required empty read method
-                });
-
-                // Function to send keepalive messages
-                const sendKeepAlive = () => {
-                    const keepAliveData = {
+                let keepAliveTimerId;
+                const sendKeepAliveSseChunk = () => {
+                    const keepAliveSseData = {
                         id: "keepalive",
                         object: "chat.completion.chunk",
                         created: Math.floor(Date.now() / 1000),
-                        model: requestedModelId,
-                        choices: [{
-                            index: 0,
-                            delta: {},
-                            finish_reason: null
-                        }]
+                        model: requestedModelIdFromKeepAlive,
+                        choices: [{ index: 0, delta: {}, finish_reason: null }]
                     };
-
-                    // Send empty delta as keepalive signal
-                    keepAliveStream.push(`data: ${JSON.stringify(keepAliveData)}\n\n`);
+                    if (!res.writableEnded) {
+                        keepAliveSseStream.push(`data: ${JSON.stringify(keepAliveSseData)}\n\n`);
+                    } else {
+                        if (keepAliveTimerId) clearInterval(keepAliveTimerId);
+                    }
                 };
 
-                // Start sending keepalive messages
-                const keepAliveInterval = setInterval(sendKeepAlive, 5000);
+                keepAliveTimerId = setInterval(sendKeepAliveSseChunk, 5000);
+                sendKeepAliveSseChunk(); // Send first one
 
-                // Send the first keepalive immediately
-                sendKeepAlive();
-
-                // Convert to OpenAI format
-                const openAIResponse = JSON.parse(transformUtils.transformGeminiResponseToOpenAI(
-                    geminiResponseData, 
-                    requestedModelId
-                ));
-
-                // Get the complete response content
-                const content = openAIResponse.choices[0].message.content || "";
-
-                // Create role information and complete content block
-                const roleChunk = {
-                    id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-                    object: "chat.completion.chunk",
-                    created: Math.floor(Date.now() / 1000),
-                    model: requestedModelId,
-                    choices: [{
-                        index: 0,
-                        delta: { role: "assistant" },
-                        finish_reason: null
-                    }]
-                };
-                
-                const contentChunk = {
-                    id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                    object: "chat.completion.chunk",
-                    created: Math.floor(Date.now() / 1000),
-                    model: requestedModelId,
-                    choices: [{
-                        index: 0,
-                        delta: { content: content },
-                        finish_reason: null
-                    }]
-                };
-                
-                const finishChunk = {
-                    id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`,
-                    object: "chat.completion.chunk",
-                    created: Math.floor(Date.now() / 1000),
-                    model: requestedModelId,
-                    choices: [{
-                        index: 0,
-                        delta: {},
-                        finish_reason: openAIResponse.choices[0].finish_reason || "stop"
-                    }]
-                };
-
-                // Send the complete response immediately without delay or chunking
-                try {
-                    // Clear the keepalive timer
-                    clearInterval(keepAliveInterval);
-
-                    // Create a single complete response object instead of multiple chunks
-                    const completeResponseChunk = {
+                getResponsePromise.then(vertexResponseData => {
+                    clearInterval(keepAliveTimerId);
+                    if (res.writableEnded) {
+                        console.warn("KEEPALIVE: Response stream ended before Vertex data could be sent.");
+                        return;
+                    }
+                    const openAIResponse = JSON.parse(transformUtils.transformGeminiResponseToOpenAI(
+                        vertexResponseData,
+                        requestedModelIdFromKeepAlive
+                    ));
+                    const content = openAIResponse.choices[0].message.content || "";
+                    const completeChunk = {
                         id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
                         object: "chat.completion.chunk",
                         created: Math.floor(Date.now() / 1000),
-                        model: requestedModelId,
+                        model: requestedModelIdFromKeepAlive,
                         choices: [{
                             index: 0,
-                            delta: { 
-                                role: "assistant",
-                                content: content 
-                            },
+                            delta: { role: "assistant", content: content },
                             finish_reason: openAIResponse.choices[0].finish_reason || "stop"
                         }]
                     };
-
-                    // Send the complete response and end marker at once
-                    keepAliveStream.push(`data: ${JSON.stringify(completeResponseChunk)}\n\n`);
-                    keepAliveStream.push('data: [DONE]\n\n');
-                    keepAliveStream.push(null);
-                } catch (error) {
-                    // Clear the timer on error
-                    clearInterval(keepAliveInterval);
-
-                    // Send error message
-                    console.error("Error processing Gemini response in KEEPALIVE mode:", error);
-                    const errorResponse = {
-                        id: "error",
-                        object: "chat.completion.chunk",
-                        created: Math.floor(Date.now() / 1000),
-                        model: requestedModelId,
-                        choices: [{
-                            index: 0,
-                            delta: { content: `Error: ${error.message}` },
-                            finish_reason: "stop"
-                        }]
-                    };
-                    keepAliveStream.push(`data: ${JSON.stringify(errorResponse)}\n\n`);
-                    keepAliveStream.push('data: [DONE]\n\n');
-                    keepAliveStream.push(null);
-                }
-
-                // Pipe keepAliveStream to the response
-                keepAliveStream.pipe(res);
-            } else {
-                 // Standard Gemini and Vertex streams are now processed by the updated transformer
-                 console.log(`Piping ${selectedKeyId === 'vertex-ai' ? 'Vertex' : 'Gemini'} stream through transformer.`);
-                 geminiResponse.body.pipe(streamTransformer).pipe(res);
-            }
-
-            // Register error handling - needed for non-keepalive mode
-            if (!result.isKeepAlive) {
-                // Handle errors on the source stream (Gemini or Vertex)
-                geminiResponse.body.on('error', (err) => {
-                    console.error(`Error reading stream from upstream (${selectedKeyId}):`, err);
-                    if (!res.headersSent) {
-                        res.status(500).json({ error: { message: 'Error reading stream from upstream API.' } });
-                    } else {
-                        res.end(); // End the connection
+                    keepAliveSseStream.push(`data: ${JSON.stringify(completeChunk)}\n\n`);
+                    keepAliveSseStream.push('data: [DONE]\n\n');
+                    keepAliveSseStream.push(null);
+                }).catch(error => {
+                    console.error("Error awaiting or processing Vertex KEEPALIVE response:", error);
+                    clearInterval(keepAliveTimerId);
+                    if (!res.writableEnded) {
+                        const errorPayload = {
+                            error: {
+                                message: error.message || 'Failed to get KEEPALIVE response from Vertex',
+                                type: error.type || 'vertex_proxy_error',
+                                code: error.code,
+                                status: error.status
+                            }
+                        };
+                        keepAliveSseStream.push(`data: ${JSON.stringify(errorPayload)}\n\n`);
+                        keepAliveSseStream.push('data: [DONE]\n\n');
+                        keepAliveSseStream.push(null);
                     }
                 });
 
-                // Handle errors on the transformer stream
+            } else { // Standard (non-KEEPALIVE) Gemini and Vertex streams
+                if (!geminiResponse || !geminiResponse.body || typeof geminiResponse.body.pipe !== 'function') {
+                    console.error('Upstream response body is not a readable stream for standard streaming request.');
+                    const errorPayload = JSON.stringify({ error: { message: 'Upstream response body is not readable.', type: 'proxy_error' } });
+                    res.write(`data: ${errorPayload}\n\n`); // Use res.write for SSE
+                    res.write('data: [DONE]\n\n');
+                    return res.end();
+                }
+
+                console.log(`Piping ${selectedKeyId === 'vertex-ai' ? 'Vertex' : 'Gemini'} stream through transformer.`);
+                geminiResponse.body.pipe(streamTransformer).pipe(res);
+
+                geminiResponse.body.on('error', (err) => {
+                    console.error(`Error reading stream from upstream (${selectedKeyId}):`, err);
+                    if (!res.headersSent) {
+                        // If headers not sent, we can still send a JSON error
+                        res.status(500).json({ error: { message: 'Error reading stream from upstream API.' } });
+                    } else if (!res.writableEnded) {
+                        // If headers sent but stream not ended, try to send an SSE error then end
+                        const sseError = JSON.stringify({ error: { message: 'Upstream stream error', type: 'upstream_error'} });
+                        res.write(`data: ${sseError}\n\n`);
+                        res.write('data: [DONE]\n\n');
+                        res.end();
+                    }
+                    // If res.writableEnded is true, nothing more we can do.
+                });
+
                 streamTransformer.on('error', (err) => {
                     console.error('Error in stream transformer:', err);
                     if (!res.headersSent) {
                         res.status(500).json({ error: { message: 'Error processing stream data.' } });
-                    } else {
+                    } else if (!res.writableEnded) {
+                        const sseError = JSON.stringify({ error: { message: 'Stream processing error', type: 'transform_error'} });
+                        res.write(`data: ${sseError}\n\n`);
+                        res.write('data: [DONE]\n\n');
                         res.end();
                     }
                 });
