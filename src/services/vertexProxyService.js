@@ -18,7 +18,7 @@ const VERTEX_SUPPORTED_MODELS = [
 ];
 
 // Default region
-const DEFAULT_REGION = 'us-central1';
+const DEFAULT_REGION = 'global';
 
 // Temporary credentials file path
 let tempCredentialsPath = null;
