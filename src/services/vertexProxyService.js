@@ -18,7 +18,7 @@ const VERTEX_SUPPORTED_MODELS = [
 ];
 
 // Default region
-const DEFAULT_REGION = 'global';
+const DEFAULT_REGION = 'us-central1';
 
 // Temporary credentials file path
 let tempCredentialsPath = null;
@@ -596,13 +596,17 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
             }
 
             // Initialize GoogleGenAI client with Vertex AI service account configuration
+            let region = DEFAULT_REGION;
+            if (requestedModelId === '[v]gemini-2.5-pro-exp-03-25') {
+                region = 'global';
+            }
             ai = new GoogleGenAI({
                 vertexai: true,
                 project: project_id,
-                location: DEFAULT_REGION
+                location: region
             });
             
-            console.log(`Vertex AI Client initialized for project '${project_id}' in region '${DEFAULT_REGION}'.`); // Keep log in English
+            console.log(`Vertex AI Client initialized for project '${project_id}' in region '${region}'.`); // Keep log in English
         }
 
         // Convert OpenAI format to Vertex format
