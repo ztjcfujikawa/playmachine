@@ -336,3 +336,5 @@ These deployment methods configure environment variables through the `.env` file
   * `CF_ACCOUNT_ID`: Your Cloudflare Account ID.
   * `CF_API_TOKEN`: Cloudflare API Token used for deploying the Worker.
   * `PAT` (Optional): Personal Access Token for GitHub Actions workflow updates or other operations requiring repository write permissions.
+
+  [![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
