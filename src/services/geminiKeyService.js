@@ -245,7 +245,7 @@ async function getAllGeminiKeysWithUsage() {
                 modelUsage: displayModelUsage,
                 categoryUsage: displayCategoryUsage,
                 categoryQuotas: categoryQuotas, // Pass fetched quotas for context
-                errorStatus: keyRow.error_status, // 401, 403, or null
+                errorStatus: keyRow.error_status, // 400, 401, 403, or null
                 consecutive429Counts: consecutive429CountsDb || {}
             };
         } catch (e) {
@@ -256,11 +256,11 @@ async function getAllGeminiKeysWithUsage() {
 }
 
 /**
- * Retrieves keys currently marked with an error status (401 or 403).
+ * Retrieves keys currently marked with an error status (400, 401 or 403).
  * @returns {Promise<Array<{id: string, name: string, error: number}>>}
  */
 async function getErrorKeys() {
-    const rows = await configService.allDb('SELECT id, name, error_status FROM gemini_keys WHERE error_status = 401 OR error_status = 403');
+    const rows = await configService.allDb('SELECT id, name, error_status FROM gemini_keys WHERE error_status = 400 OR error_status = 401 OR error_status = 403');
     return rows.map(row => ({
         id: row.id,
         name: row.name || row.id,
@@ -296,13 +296,13 @@ async function clearKeyError(keyId) {
 }
 
 /**
- * Records a persistent error (401/403) for a key.
+ * Records a persistent error (400/401/403) for a key.
  * @param {string} keyId
- * @param {401 | 403} status
+ * @param {400 | 401 | 403} status
  * @returns {Promise<void>}
  */
 async function recordKeyError(keyId, status) {
-    if (status !== 401 && status !== 403) {
+    if (status !== 400 && status !== 401 && status !== 403) {
         console.warn(`Attempted to record invalid error status ${status} for key ${keyId}.`);
         return;
     }
@@ -418,8 +418,8 @@ async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
                     continue; // Skip this key if its details aren't in the DB
                 }
 
-                // Check for 401/403 error status
-                if (keyInfo.error_status === 401 || keyInfo.error_status === 403) {
+                // Check for 400/401/403 error status
+                if (keyInfo.error_status === 400 || keyInfo.error_status === 401 || keyInfo.error_status === 403) {
                     console.log(`Skipping key ${keyId} due to error status: ${keyInfo.error_status}`);
                     currentIndex = nextIndex;
                     continue;

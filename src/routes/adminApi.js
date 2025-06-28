@@ -176,8 +176,8 @@ if (isSuccess) {
                  // Increment usage and sync to GitHub
                  await geminiKeyService.incrementKeyUsage(keyId, modelId, modelCategory);
             } else {
-                 // Record 401/403 errors
-                 if (testResponseStatus === 401 || testResponseStatus === 403) {
+                 // Record 400/401/403 errors (invalid API key, unauthorized, forbidden)
+                 if (testResponseStatus === 400 || testResponseStatus === 401 || testResponseStatus === 403) {
                      await geminiKeyService.recordKeyError(keyId, testResponseStatus);
                  }
             }

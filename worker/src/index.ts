@@ -52,7 +52,7 @@ interface GeminiKeyInfo {
 	modelUsage?: Record<string, number>;
 	categoryUsage?: { pro: number; flash: number };
 	name?: string;
-	errorStatus?: 401 | 403 | null; // Added to track 401/403 errors
+	errorStatus?: 400 | 401 | 403 | null; // Added to track 400/401/403 errors
 	consecutive429Counts?: Record<string, number>; // Tracks consecutive 429 errors per model/category
 }
 
@@ -1357,10 +1357,10 @@ async function handleTestGeminiKey(request: Request, env: Env, ctx: ExecutionCon
 		if (response.ok) {
 			ctx.waitUntil(incrementKeyUsage(body.keyId, env, body.modelId, modelCategory));
 		} else {
-			// --- New: Record 401/403 errors during test ---
-			if (response.status === 401 || response.status === 403) {
+			// --- New: Record 400/401/403 errors during test ---
+			if (response.status === 400 || response.status === 401 || response.status === 403) {
 				console.warn(`Received ${response.status} during test for key ${body.keyId}. Recording error status.`);
-				ctx.waitUntil(recordKeyError(body.keyId, env, response.status as 401 | 403));
+				ctx.waitUntil(recordKeyError(body.keyId, env, response.status as 400 | 401 | 403));
 			}
 			// --- End New Error Recording ---
 		}
@@ -2634,9 +2634,9 @@ async function handle429Error(keyId: string, env: Env, category: 'Pro' | 'Flash'
 
 
 /**
- * Records a 401 or 403 error status for a given Gemini Key ID in KV.
+ * Records a 400, 401 or 403 error status for a given Gemini Key ID in KV.
  */
-async function recordKeyError(keyId: string, env: Env, status: 401 | 403): Promise<void> {
+async function recordKeyError(keyId: string, env: Env, status: 400 | 401 | 403): Promise<void> {
 	const keyKvName = `key:${keyId}`;
 	try {
 		const keyInfoJson = await env.GEMINI_KEYS_KV.get(keyKvName);

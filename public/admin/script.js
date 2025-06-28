@@ -43,12 +43,154 @@ document.addEventListener('DOMContentLoaded', () => {
     const darkModeToggle = document.getElementById('dark-mode-toggle');
     const sunIcon = document.getElementById('sun-icon');
     const moonIcon = document.getElementById('moon-icon');
+    // Run All Test Elements
+    const runAllTestBtn = document.getElementById('run-all-test-btn');
+    const testProgressArea = document.getElementById('test-progress-area');
+    const cancelAllTestBtn = document.getElementById('cancel-all-test-btn');
+    const testProgressBar = document.getElementById('test-progress-bar');
+    const testProgressText = document.getElementById('test-progress-text');
+    const testStatusText = document.getElementById('test-status-text');
 
     // --- Global Cache ---
     let cachedModels = [];
     let cachedGeminiModels = []; // Add cache for available Gemini models
     let cachedCategoryQuotas = { proQuota: 0, flashQuota: 0 };
+
+    // --- Global Test State ---
+    let isRunningAllTests = false;
+    let testCancelRequested = false;
+    let currentTestBatch = [];
     // No need for a separate errorKeyIds cache, as errorStatus is now part of the key data
+
+    // --- Run All Test Functions ---
+    async function runAllGeminiKeysTest() {
+        try {
+            isRunningAllTests = true;
+            testCancelRequested = false;
+
+            // Show progress area
+            testProgressArea.classList.remove('hidden');
+            runAllTestBtn.disabled = true;
+            cancelAllTestBtn.disabled = false;
+
+            // Get all Gemini keys
+            const keys = await apiFetch('/gemini-keys');
+            if (!keys || keys.length === 0) {
+                showError('No Gemini keys found to test.');
+                return;
+            }
+
+            const totalKeys = keys.length;
+            let completedTests = 0;
+            const testModel = 'gemini-2.0-flash'; // Fixed model for testing
+
+            // Update initial progress
+            updateTestProgress(completedTests, totalKeys, 'Preparing tests...');
+
+            // Process keys in batches of 5
+            const batchSize = 5;
+            for (let i = 0; i < keys.length; i += batchSize) {
+                if (testCancelRequested) {
+                    break;
+                }
+
+                const batch = keys.slice(i, i + batchSize);
+                currentTestBatch = batch;
+
+                updateTestProgress(completedTests, totalKeys, `Testing batch ${Math.floor(i / batchSize) + 1}...`);
+
+                // Run tests for current batch concurrently
+                const batchPromises = batch.map(key => testSingleKey(key.id, testModel));
+                const batchResults = await Promise.allSettled(batchPromises);
+
+                // Update progress
+                completedTests += batch.length;
+                updateTestProgress(completedTests, totalKeys, `Completed ${completedTests} of ${totalKeys} tests`);
+
+                // Small delay between batches to avoid overwhelming the server
+                if (i + batchSize < keys.length && !testCancelRequested) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+
+            // Final status
+            if (testCancelRequested) {
+                updateTestProgress(completedTests, totalKeys, 'Tests cancelled by user');
+                showError('Test run was cancelled.');
+            } else {
+                updateTestProgress(completedTests, totalKeys, 'All tests completed!');
+                showSuccess(`Completed testing ${totalKeys} Gemini keys with model ${testModel}.`);
+
+                // Auto-hide progress area after 3 seconds
+                setTimeout(() => {
+                    testProgressArea.classList.add('hidden');
+                }, 3000);
+            }
+
+            // Reload keys to show updated status
+            await loadGeminiKeys();
+
+        } catch (error) {
+            console.error('Error running all tests:', error);
+            showError(`Failed to run all tests: ${error.message}`);
+            updateTestProgress(0, 0, 'Test run failed');
+        } finally {
+            isRunningAllTests = false;
+            runAllTestBtn.disabled = false;
+            cancelAllTestBtn.disabled = true;
+            currentTestBatch = [];
+        }
+    }
+
+    async function testSingleKey(keyId, modelId) {
+        try {
+            // Use direct fetch to get detailed error information
+            const response = await fetch('/api/admin/test-gemini-key', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+                body: JSON.stringify({ keyId, modelId })
+            });
+
+            // Parse response regardless of status code
+            let result = null;
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                result = await response.json();
+            } else {
+                const textContent = await response.text();
+                result = {
+                    success: false,
+                    status: response.status,
+                    content: textContent || 'No response content'
+                };
+            }
+
+            return {
+                keyId,
+                success: result?.success || false,
+                status: result?.status || response.status,
+                error: result?.success ? null : (result?.content || 'Test failed')
+            };
+        } catch (error) {
+            return {
+                keyId,
+                success: false,
+                status: 'error',
+                error: error.message || 'Network error'
+            };
+        }
+    }
+
+    function updateTestProgress(completed, total, statusMessage) {
+        const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+        testProgressBar.style.width = `${percentage}%`;
+        testProgressText.textContent = `${completed} / ${total}`;
+        testStatusText.textContent = statusMessage;
+    }
 
     // --- Utility Functions ---
     function showLoading() {
@@ -305,7 +447,7 @@ async function renderGeminiKeys(keys) {
 
             // Show warning icon
             let rightSideContent = '';
-            if (key.errorStatus === 401 || key.errorStatus === 403) {
+            if (key.errorStatus === 400 || key.errorStatus === 401 || key.errorStatus === 403) {
                 rightSideContent = `
                     <div class="warning-icon-container">
                         <svg class="w-5 h-5 text-yellow-500 warning-icon" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -631,13 +773,31 @@ async function renderGeminiKeys(keys) {
                 resultDiv.classList.remove('hidden');
                 resultPre.textContent = 'Testing...';
 
-                // Send test request，捕获异常并只显示在测试区域
+                // Send test request directly to handle both success and error responses
                 let result = null;
                 try {
-                    result = await apiFetch('/test-gemini-key', {
+                    // Use direct fetch instead of apiFetch to get raw response
+                    const response = await fetch('/api/admin/test-gemini-key', {
                         method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        credentials: 'include',
                         body: JSON.stringify({ keyId, modelId })
-                    }, true); // suppressGlobalError = true
+                    });
+
+                    // Parse response regardless of status code
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.indexOf("application/json") !== -1) {
+                        result = await response.json();
+                    } else {
+                        const textContent = await response.text();
+                        result = {
+                            success: false,
+                            status: response.status,
+                            content: textContent || 'No response content'
+                        };
+                    }
 
                     if (result) {
                         const formattedContent = typeof result.content === 'object'
@@ -656,8 +816,8 @@ async function renderGeminiKeys(keys) {
                         resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                     }
                 } catch (error) {
-                    // 只在测试区域显示错误
-                    resultPre.textContent = `Test failed: ${error.message || 'Unknown error'}`;
+                    // 只在测试区域显示网络错误
+                    resultPre.textContent = `Test failed: Network error - ${error.message || 'Unknown error'}`;
                     resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                 }
             });
@@ -1390,6 +1550,21 @@ async function renderGeminiKeys(keys) {
 
     cancelIndividualQuotaBtn.addEventListener('click', () => {
         individualQuotaModal.classList.add('hidden');
+    });
+
+    // --- Run All Test Logic ---
+    runAllTestBtn.addEventListener('click', async () => {
+        if (isRunningAllTests) {
+            return; // Prevent multiple concurrent tests
+        }
+
+        await runAllGeminiKeysTest();
+    });
+
+    cancelAllTestBtn.addEventListener('click', () => {
+        testCancelRequested = true;
+        testStatusText.textContent = 'Cancelling tests...';
+        cancelAllTestBtn.disabled = true;
     });
 
     individualQuotaModal.addEventListener('click', (e) => {
