@@ -57,9 +57,8 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // --- Basic Routes ---
 
 // Root route: Redirects to /admin/index.html if logged in, otherwise requireAdminAuth redirects to /login.html
-app.get('/', requireAdminAuth, (req, res) => {
-    // If we reach here, user is authenticated by requireAdminAuth
-    res.redirect('/admin/index.html');
+app.get('/', (req, res) => {
+    res.redirect('/login.html');
 });
 
 // Redirect /login to the static HTML file

@@ -120,24 +120,6 @@ export default {
 				return await handleApiV1(request, env, ctx);
 			}
 
-			// --- Login Page ---
-			if (pathname === '/login') {
-				// Serve login.html using ASSETS fetcher
-				const loginUrl = new URL(url);
-				loginUrl.pathname = '/login.html';
-				const loginRequest = new Request(loginUrl.toString(), request);
-				try {
-					const assetResponse = await env.ASSETS.fetch(loginRequest);
-					if (assetResponse.status === 404) {
-						return new Response(`Login page not found at /public/login.html`, { status: 404 });
-					}
-					return assetResponse;
-				} catch (e) {
-					console.error("Error fetching login page asset:", e);
-					return new Response(`Error fetching login page asset`, { status: 500 });
-				}
-			}
-
 			// --- Login/Logout API ---
 			if (pathname === '/api/login' && request.method === 'POST') {
 				return await handleLoginRequest(request, env);
@@ -186,7 +168,20 @@ export default {
 				if (sessionValid) {
 					return Response.redirect(url.origin + '/admin', 302);
 				} else {
-					return Response.redirect(url.origin + '/login', 302);
+					// Directly serve login.html for the root path if not logged in
+					const loginUrl = new URL(url);
+					loginUrl.pathname = '/login.html';
+					const loginRequest = new Request(loginUrl.toString(), request);
+					try {
+						const assetResponse = await env.ASSETS.fetch(loginRequest);
+						if (assetResponse.status === 404) {
+							return new Response(`Login page not found at /public/login.html`, { status: 404 });
+						}
+						return assetResponse;
+					} catch (e) {
+						console.error("Error fetching login page asset:", e);
+						return new Response(`Error fetching login page asset`, { status: 500 });
+					}
 				}
 			}
 
