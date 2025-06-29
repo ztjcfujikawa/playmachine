@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Get all Gemini keys
             const keys = await apiFetch('/gemini-keys');
             if (!keys || keys.length === 0) {
-                showError('No Gemini keys found to test.');
+                showError(t('no_gemini_keys_found'));
                 return;
             }
 
@@ -85,7 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const testModel = 'gemini-2.0-flash'; // Fixed model for testing
 
             // Update initial progress
-            updateTestProgress(completedTests, totalKeys, 'Preparing tests...');
+            updateTestProgress(completedTests, totalKeys, t('preparing_tests'));
 
             // Process keys in batches of 5
             const batchSize = 5;
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const batch = keys.slice(i, i + batchSize);
                 currentTestBatch = batch;
 
-                updateTestProgress(completedTests, totalKeys, `Testing batch ${Math.floor(i / batchSize) + 1}...`);
+                updateTestProgress(completedTests, totalKeys, t('testing_batch', Math.floor(i / batchSize) + 1));
 
                 // Run tests for current batch concurrently
                 const batchPromises = batch.map(key => testSingleKey(key.id, testModel));
@@ -105,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Update progress
                 completedTests += batch.length;
-                updateTestProgress(completedTests, totalKeys, `Completed ${completedTests} of ${totalKeys} tests`);
+                updateTestProgress(completedTests, totalKeys, t('completed_tests', completedTests, totalKeys));
 
                 // Small delay between batches to avoid overwhelming the server
                 if (i + batchSize < keys.length && !testCancelRequested) {
@@ -115,11 +115,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Final status
             if (testCancelRequested) {
-                updateTestProgress(completedTests, totalKeys, 'Tests cancelled by user');
-                showError('Test run was cancelled.');
+                updateTestProgress(completedTests, totalKeys, t('tests_cancelled'));
+                showError(t('test_run_cancelled'));
             } else {
-                updateTestProgress(completedTests, totalKeys, 'All tests completed!');
-                showSuccess(`Completed testing ${totalKeys} Gemini keys with model ${testModel}.`);
+                updateTestProgress(completedTests, totalKeys, t('all_tests_completed'));
+                showSuccess(t('completed_testing', totalKeys, testModel));
 
                 // Auto-hide progress area after 3 seconds
                 setTimeout(() => {
@@ -132,8 +132,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Error running all tests:', error);
-            showError(`Failed to run all tests: ${error.message}`);
-            updateTestProgress(0, 0, 'Test run failed');
+            showError(t('failed_to_run_tests', error.message));
+            updateTestProgress(0, 0, t('test_run_failed'));
         } finally {
             isRunningAllTests = false;
             runAllTestBtn.disabled = false;
@@ -495,19 +495,19 @@ async function renderGeminiKeys(keys) {
                     </div>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div>
-                            <p class="text-sm text-gray-600">ID: ${key.id}</p>
-                            <p class="text-sm text-gray-600">Key Preview: ${key.keyPreview}</p>
+                            <p class="text-sm text-gray-600">${t('id')}: ${key.id}</p>
+                            <p class="text-sm text-gray-600">${t('key_preview')}: ${key.keyPreview}</p>
                         </div>
                         <div>
-                            <p class="text-sm text-gray-600">Total Usage Today: ${key.usage}</p>
-                            <p class="text-sm text-gray-600">Date: ${key.usageDate}</p>
-                            ${key.errorStatus ? `<p class="text-sm text-red-600 font-medium">Error Status: ${key.errorStatus}</p>` : ''}
+                            <p class="text-sm text-gray-600">${t('total_usage_today')}: ${key.usage}</p>
+                            <p class="text-sm text-gray-600">${t('date')}: ${key.usageDate}</p>
+                            ${key.errorStatus ? `<p class="text-sm text-red-600 font-medium">${t('error_status')}: ${key.errorStatus}</p>` : ''}
                         </div>
                     </div>
                     <div class="flex justify-end space-x-2 mb-4">
-                        ${key.errorStatus ? `<button data-id="${key.id}" class="clear-gemini-key-error text-yellow-600 hover:text-yellow-800 font-medium px-3 py-1 border border-yellow-600 rounded">Ignore Error</button>` : ''}
-                        <button data-id="${key.id}" class="test-gemini-key text-blue-500 hover:text-blue-700 font-medium px-3 py-1 border border-blue-500 rounded">Test</button>
-                        <button data-id="${key.id}" class="delete-gemini-key text-red-500 hover:text-red-700 font-medium px-3 py-1 border border-red-500 rounded">Delete</button>
+                        ${key.errorStatus ? `<button data-id="${key.id}" class="clear-gemini-key-error text-yellow-600 hover:text-yellow-800 font-medium px-3 py-1 border border-yellow-600 rounded">${t('ignore_error')}</button>` : ''}
+                        <button data-id="${key.id}" class="test-gemini-key text-blue-500 hover:text-blue-700 font-medium px-3 py-1 border border-blue-500 rounded">${t('test')}</button>
+                        <button data-id="${key.id}" class="delete-gemini-key text-red-500 hover:text-red-700 font-medium px-3 py-1 border border-red-500 rounded">${t('delete')}</button>
                     </div>
                     <!-- Container for error messages within the modal -->
                     <div id="gemini-key-error-container-${key.id}" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded relative mb-4" role="alert">
@@ -516,7 +516,7 @@ async function renderGeminiKeys(keys) {
 
                     <!-- Category Usage Section -->
                     <div class="border-t border-gray-200 pt-4 mb-4">
-                        <h3 class="text-lg font-medium text-gray-800 mb-3">Category Usage</h3>
+                        <h3 class="text-lg font-medium text-gray-800 mb-3">${t('category_usage')}</h3>
                         <div class="space-y-4">
             `;
 
@@ -532,7 +532,7 @@ async function renderGeminiKeys(keys) {
             modalHTML += `
                 <div>
                     <div class="flex justify-between mb-1">
-                        <span class="text-sm font-medium text-gray-700">Pro Models</span>
+                        <span class="text-sm font-medium text-gray-700">${t('pro_models')}</span>
                         <span class="text-sm font-medium text-gray-700">${proRemainingDisplay}/${proQuotaDisplay}</span>
                     </div>
                     <div class="w-full bg-gray-200 rounded-full h-2.5">
@@ -589,7 +589,7 @@ async function renderGeminiKeys(keys) {
             modalHTML += `
                 <div class="mt-2">
                     <div class="flex justify-between mb-1">
-                        <span class="text-sm font-medium text-gray-700">Flash Models</span>
+                        <span class="text-sm font-medium text-gray-700">${t('flash_models')}</span>
                         <span class="text-sm font-medium text-gray-700">${flashRemainingDisplay}/${flashQuotaDisplay}</span>
                     </div>
                     <div class="w-full bg-gray-200 rounded-full h-2.5">
@@ -688,14 +688,14 @@ async function renderGeminiKeys(keys) {
             // Add test section (remains mostly the same, uses cachedModels)
             modalHTML += `
                 <div class="test-model-section mt-3 border-t pt-4 hidden" data-key-id="${key.id}">
-                    <h3 class="text-lg font-medium text-gray-800 mb-2">Test API Key</h3>
+                    <h3 class="text-lg font-medium text-gray-800 mb-2">${t('test_api_key')}</h3>
                     <div class="flex items-center">
                         <select class="model-select mr-2 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
-                            <option value="">Select a model...</option>
+                            <option value="">${t('select_a_model')}</option>
                             ${cachedModels.map(model => `<option value="${model.id}">${model.id}</option>`).join('')}
                         </select>
                         <button class="run-test-btn inline-flex justify-center py-1 px-3 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-                            Run Test
+                            ${t('run_test')}
                         </button>
                     </div>
                     <div class="test-result mt-2 hidden">
@@ -765,13 +765,13 @@ async function renderGeminiKeys(keys) {
                 const resultPre = resultDiv.querySelector('pre');
 
                 if (!modelId) {
-                    showError('Please select a model to test');
+                    showError(t('please_select_model'));
                     return;
                 }
 
                 // Show result area and set "Loading" text
                 resultDiv.classList.remove('hidden');
-                resultPre.textContent = 'Testing...';
+                resultPre.textContent = t('testing');
 
                 // Send test request directly to handle both success and error responses
                 let result = null;
@@ -805,19 +805,19 @@ async function renderGeminiKeys(keys) {
                             : result.content;
 
                         if (result.success) {
-                            resultPre.textContent = `Test Passed!\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
+                            resultPre.textContent = `${t('test_passed')}\n${t('status')}: ${result.status}\n\n${t('response')}:\n${formattedContent}`;
                             resultPre.className = 'text-xs bg-green-50 text-green-800 p-2 rounded overflow-x-auto';
                         } else {
-                            resultPre.textContent = `Test Failed.\nStatus: ${result.status}\n\nResponse:\n${formattedContent}`;
+                            resultPre.textContent = `${t('test_failed')}\n${t('status')}: ${result.status}\n\n${t('response')}:\n${formattedContent}`;
                             resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                         }
                     } else {
-                        resultPre.textContent = 'Test failed: No response from server';
+                        resultPre.textContent = t('test_failed_no_response');
                         resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                     }
                 } catch (error) {
                     // 只在测试区域显示网络错误
-                    resultPre.textContent = `Test failed: Network error - ${error.message || 'Unknown error'}`;
+                    resultPre.textContent = t('test_failed_network', error.message || t('unknown_error'));
                     resultPre.className = 'text-xs bg-red-50 text-red-800 p-2 rounded overflow-x-auto';
                 }
             });
@@ -840,13 +840,13 @@ async function renderGeminiKeys(keys) {
                 <div class="flex items-center justify-between mb-2">
                     <div>
                         <p class="font-mono text-sm text-gray-700">${key.key}</p>
-                        <p class="text-xs text-gray-500">${key.description || 'No description'} (Created: ${new Date(key.createdAt).toLocaleDateString()})</p>
+                        <p class="text-xs text-gray-500">${key.description || t('no_description')} (${t('created')}: ${new Date(key.createdAt).toLocaleDateString()})</p>
                     </div>
-                    <button data-key="${key.key}" class="delete-worker-key text-red-500 hover:text-red-700 font-medium">Delete</button>
+                    <button data-key="${key.key}" class="delete-worker-key text-red-500 hover:text-red-700 font-medium">${t('delete')}</button>
                 </div>
                 <div class="flex items-center mt-2 border-t pt-2">
                     <div class="flex items-center">
-                        <label for="safety-toggle-${key.key}" class="text-sm font-medium text-gray-700 mr-2">Safety Settings:</label>
+                        <label for="safety-toggle-${key.key}" class="text-sm font-medium text-gray-700 mr-2">${t('safety_settings')}:</label>
                         <div class="relative inline-block w-10 mr-2 align-middle select-none">
                             <input type="checkbox" id="safety-toggle-${key.key}"
                                 data-key="${key.key}"
@@ -858,7 +858,7 @@ async function renderGeminiKeys(keys) {
                             ></label>
                         </div>
                         <span class="text-xs font-medium ${isSafetyEnabled ? 'text-green-600' : 'text-red-600'}">
-                            ${isSafetyEnabled ? 'Enabled' : 'Disabled'}
+                            ${isSafetyEnabled ? t('enabled') : t('disabled')}
                         </span>
                     </div>
                 </div>
@@ -890,7 +890,7 @@ async function renderGeminiKeys(keys) {
                 const key = this.dataset.key;
                 const isEnabled = this.checked;
                 const statusText = this.parentElement.nextElementSibling;
-                statusText.textContent = isEnabled ? 'Enabled' : 'Disabled';
+                statusText.textContent = isEnabled ? t('enabled') : t('disabled');
                 statusText.className = `text-xs font-medium ${isEnabled ? 'text-green-600' : 'text-red-600'}`;
                 saveSafetySettingsToServer(key, isEnabled);
 
@@ -911,23 +911,23 @@ async function renderGeminiKeys(keys) {
             
             let quotaDisplay = model.category;
             if (model.category === 'Custom') {
-                quotaDisplay += ` (Quota: ${model.dailyQuota === undefined ? 'Unlimited' : model.dailyQuota})`;
+                quotaDisplay += ` (${t('quota')}: ${model.dailyQuota === undefined ? t('unlimited') : model.dailyQuota})`;
             } else if (model.individualQuota) {
                 // Show individual quota if it exists for Pro/Flash models
-                quotaDisplay += ` (Individual Quota: ${model.individualQuota})`;
+                quotaDisplay += ` (${t('individual_quota')}: ${model.individualQuota})`;
             }
 
             let actionsHtml = '';
             // Only show Set Individual Quota button for Pro and Flash models
             if (model.category === 'Pro' || model.category === 'Flash') {
                 actionsHtml = `
-                    <button data-id="${model.id}" data-category="${model.category}" data-quota="${model.individualQuota || 0}" 
+                    <button data-id="${model.id}" data-category="${model.category}" data-quota="${model.individualQuota || 0}"
                         class="set-individual-quota mr-2 text-blue-500 hover:text-blue-700 font-medium">
-                        Set Quota
+                        ${t('set_quota_btn')}
                     </button>
                 `;
             }
-            actionsHtml += `<button data-id="${model.id}" class="delete-model text-red-500 hover:text-red-700 font-medium">Delete</button>`;
+            actionsHtml += `<button data-id="${model.id}" class="delete-model text-red-500 hover:text-red-700 font-medium">${t('delete')}</button>`;
 
             item.innerHTML = `
                 <div>
@@ -1256,7 +1256,7 @@ async function renderGeminiKeys(keys) {
     document.addEventListener('click', async (e) => {
         if (e.target.classList.contains('delete-gemini-key')) {
             const keyId = e.target.dataset.id;
-            if (confirm(`Are you sure you want to delete Gemini key with ID: ${keyId}?`)) {
+            if (confirm(t('delete_confirm_gemini', keyId))) {
                 const modal = e.target.closest('.fixed.inset-0');
                 if (modal) {
                     modal.classList.add('hidden');
@@ -1363,7 +1363,7 @@ async function renderGeminiKeys(keys) {
             const key = e.target.dataset.key;
 
              // Use key in the path for deletion, matching backend expectation
-            if (confirm(`Are you sure you want to delete Worker key: ${key}?`)) {
+            if (confirm(t('delete_confirm_worker', key))) {
                 const result = await apiFetch(`/worker-keys/${encodeURIComponent(key)}`, {
                     method: 'DELETE',
                 });
@@ -1470,7 +1470,7 @@ async function renderGeminiKeys(keys) {
             const modelId = e.target.dataset.id;
 
              // Use model ID in the path for deletion, matching backend expectation
-            if (confirm(`Are you sure you want to delete model: ${modelId}?`)) {
+            if (confirm(t('delete_confirm_model', modelId))) {
                 const result = await apiFetch(`/models/${encodeURIComponent(modelId)}`, {
                     method: 'DELETE',
                 });
@@ -1563,7 +1563,7 @@ async function renderGeminiKeys(keys) {
 
     cancelAllTestBtn.addEventListener('click', () => {
         testCancelRequested = true;
-        testStatusText.textContent = 'Cancelling tests...';
+        testStatusText.textContent = t('cancelling_tests');
         cancelAllTestBtn.disabled = true;
     });
 
