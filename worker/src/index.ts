@@ -948,7 +948,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 									try {
 										controller.enqueue(encodeKeepAliveChunk(requestedModelId!));
 										console.log("Keepalive chunk sent.");
-										keepAliveTimer = setTimeout(sendKeepAlive, 3000); // Send every 3 seconds
+										keepAliveTimer = setTimeout(sendKeepAlive, 5000); // Send every 5 seconds
 									} catch (e) {
 										console.error("Error sending keepalive chunk:", e);
 										clearTimeout(keepAliveTimer);
@@ -961,7 +961,7 @@ async function handleV1ChatCompletions(request: Request, env: Env, ctx: Executio
 									// Send the first keepalive immediately
 									controller.enqueue(encodeKeepAliveChunk(requestedModelId!));
 									console.log("Initial keepalive chunk sent.");
-									keepAliveTimer = setTimeout(sendKeepAlive, 3000);
+									keepAliveTimer = setTimeout(sendKeepAlive, 5000);
 
 									// Transform the complete Gemini response - use original model ID with search suffix if present
 									const openaiResponseObject = transformGeminiResponseToOpenAIObject(geminiJson, responseModelId);

@@ -465,122 +465,173 @@ router.post('/chat/completions', async (req, res, next) => {
 
                 const keepAliveSseStream = new Readable({ read() {} });
                 let keepAliveTimerId;
-                let isStreamClosed = false;
+                let isConnectionClosed = false;
 
-                // Handle client disconnect
+                // Function to safely clean up resources
                 const cleanup = () => {
                     if (keepAliveTimerId) {
                         clearInterval(keepAliveTimerId);
                         keepAliveTimerId = null;
                     }
-                    isStreamClosed = true;
+                    isConnectionClosed = true;
                 };
 
-                // Listen for client disconnect events
+                // Monitor client connection status
                 res.on('close', () => {
-                    console.log('KEEPALIVE: Client disconnected');
+                    console.log('KEEPALIVE: Client connection closed');
                     cleanup();
                 });
 
                 res.on('error', (err) => {
-                    console.error('KEEPALIVE: Response error:', err);
+                    console.error('KEEPALIVE: Client connection error:', err);
                     cleanup();
                 });
 
-                // Handle pipe errors
+                // Handle stream errors
                 keepAliveSseStream.on('error', (err) => {
                     console.error('KEEPALIVE: Stream error:', err);
                     cleanup();
                 });
 
-                // Pipe to response with error handling
-                keepAliveSseStream.pipe(res);
+                // Handle stream end
+                keepAliveSseStream.on('end', () => {
+                    console.log('KEEPALIVE: Stream ended');
+                    cleanup();
+                });
+
+                // Handle stream finish
+                keepAliveSseStream.on('finish', () => {
+                    console.log('KEEPALIVE: Stream finished');
+                    cleanup();
+                });
 
                 const sendKeepAliveSseChunk = () => {
-                    if (isStreamClosed || res.writableEnded) {
+                    // Check multiple connection states
+                    if (isConnectionClosed || res.writableEnded || res.destroyed || !res.writable) {
                         cleanup();
                         return;
                     }
 
-                    const keepAliveSseData = {
-                        id: "keepalive",
-                        object: "chat.completion.chunk",
-                        created: Math.floor(Date.now() / 1000),
-                        model: requestedModelIdFromKeepAlive,
-                        choices: [{ index: 0, delta: {}, finish_reason: null }]
-                    };
-
                     try {
+                        const keepAliveSseData = {
+                            id: "keepalive",
+                            object: "chat.completion.chunk",
+                            created: Math.floor(Date.now() / 1000),
+                            model: requestedModelIdFromKeepAlive,
+                            choices: [{ index: 0, delta: {}, finish_reason: null }]
+                        };
                         keepAliveSseStream.push(`data: ${JSON.stringify(keepAliveSseData)}\n\n`);
-                    } catch (error) {
-                        console.error('KEEPALIVE: Error sending keepalive chunk:', error);
+                    } catch (err) {
+                        console.error('KEEPALIVE: Error sending heartbeat:', err);
                         cleanup();
                     }
                 };
 
-                // Start keepalive heartbeat
-                keepAliveTimerId = setInterval(sendKeepAliveSseChunk, 3000);
+                // Pipe stream to response after setting up error handlers
+                const pipeStream = keepAliveSseStream.pipe(res);
+
+                // Handle pipe errors
+                pipeStream.on('error', (err) => {
+                    console.error('KEEPALIVE: Pipe error:', err);
+                    cleanup();
+                });
+
+                // Start heartbeat
+                keepAliveTimerId = setInterval(sendKeepAliveSseChunk, 5000);
                 sendKeepAliveSseChunk(); // Send first one
 
-                // Process the response after a short delay to allow heartbeat to establish
-                setTimeout(() => {
-                    if (isStreamClosed) {
-                        console.log('KEEPALIVE: Stream already closed, skipping response processing');
-                        return;
-                    }
+                // In KEEPALIVE mode, we already have the complete response data
+                // Process it immediately instead of waiting for a promise
+                try {
+                    // Set up a safety timeout to prevent hanging connections
+                    const safetyTimeout = setTimeout(() => {
+                        if (!isConnectionClosed) {
+                            console.warn("KEEPALIVE: Safety timeout reached, forcing cleanup");
+                            cleanup();
+                            if (!res.writableEnded && !res.destroyed && res.writable) {
+                                try {
+                                    const timeoutPayload = {
+                                        error: {
+                                            message: 'KEEPALIVE timeout - connection cleanup forced',
+                                            type: 'keepalive_timeout_error'
+                                        }
+                                    };
+                                    keepAliveSseStream.push(`data: ${JSON.stringify(timeoutPayload)}\n\n`);
+                                    keepAliveSseStream.push('data: [DONE]\n\n');
+                                    keepAliveSseStream.push(null);
+                                } catch (pushError) {
+                                    console.error("KEEPALIVE: Failed to send timeout error:", pushError);
+                                }
+                            }
+                        }
+                    }, 300000); // 300 second (5 minute) safety timeout
 
-                    try {
-                        cleanup(); // Stop heartbeat before sending final response
-
-                        if (res.writableEnded) {
-                            console.warn("KEEPALIVE: Response stream ended before data could be sent.");
+                    // Wait a bit to ensure heartbeat is established
+                    setTimeout(() => {
+                        if (isConnectionClosed) {
+                            console.warn("KEEPALIVE: Connection closed before sending response data");
+                            clearTimeout(safetyTimeout);
                             return;
                         }
 
-                        const openAIResponse = JSON.parse(transformUtils.transformGeminiResponseToOpenAI(
-                            geminiResponse,
-                            requestedModelIdFromKeepAlive
-                        ));
-                        const content = openAIResponse.choices[0].message.content || "";
-                        const completeChunk = {
-                            id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-                            object: "chat.completion.chunk",
-                            created: Math.floor(Date.now() / 1000),
-                            model: requestedModelIdFromKeepAlive,
-                            choices: [{
-                                index: 0,
-                                delta: { role: "assistant", content: content },
-                                finish_reason: openAIResponse.choices[0].finish_reason || "stop"
-                            }]
-                        };
+                        try {
+                            clearTimeout(safetyTimeout);
+                            cleanup(); // Stop heartbeat before sending final response
 
-                        if (!isStreamClosed && !res.writableEnded) {
+                            // Double-check connection status
+                            if (res.writableEnded || res.destroyed || !res.writable) {
+                                console.warn("KEEPALIVE: Response stream ended before data could be sent.");
+                                return;
+                            }
+
+                            const openAIResponse = JSON.parse(transformUtils.transformGeminiResponseToOpenAI(
+                                geminiResponse,
+                                requestedModelIdFromKeepAlive
+                            ));
+                            const content = openAIResponse.choices[0].message.content || "";
+                            const completeChunk = {
+                                id: `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+                                object: "chat.completion.chunk",
+                                created: Math.floor(Date.now() / 1000),
+                                model: requestedModelIdFromKeepAlive,
+                                choices: [{
+                                    index: 0,
+                                    delta: { role: "assistant", content: content },
+                                    finish_reason: openAIResponse.choices[0].finish_reason || "stop"
+                                }]
+                            };
+
                             keepAliveSseStream.push(`data: ${JSON.stringify(completeChunk)}\n\n`);
                             keepAliveSseStream.push('data: [DONE]\n\n');
-                            keepAliveSseStream.push(null);
-                        }
-                    } catch (error) {
-                        console.error("Error processing KEEPALIVE response:", error);
-                        cleanup();
-                        if (!isStreamClosed && !res.writableEnded) {
-                            try {
-                                const errorPayload = {
-                                    error: {
-                                        message: error.message || 'Failed to process KEEPALIVE response',
-                                        type: error.type || 'keepalive_proxy_error',
-                                        code: error.code,
-                                        status: error.status
-                                    }
-                                };
-                                keepAliveSseStream.push(`data: ${JSON.stringify(errorPayload)}\n\n`);
-                                keepAliveSseStream.push('data: [DONE]\n\n');
-                                keepAliveSseStream.push(null);
-                            } catch (pushError) {
-                                console.error('KEEPALIVE: Error sending error response:', pushError);
+                            keepAliveSseStream.push(null); // End the stream
+                        } catch (error) {
+                            console.error("Error processing KEEPALIVE response:", error);
+                            clearTimeout(safetyTimeout);
+                            cleanup();
+
+                            if (!res.writableEnded && !res.destroyed && res.writable) {
+                                try {
+                                    const errorPayload = {
+                                        error: {
+                                            message: error.message || 'Failed to process KEEPALIVE response',
+                                            type: error.type || 'keepalive_proxy_error',
+                                            code: error.code,
+                                            status: error.status
+                                        }
+                                    };
+                                    keepAliveSseStream.push(`data: ${JSON.stringify(errorPayload)}\n\n`);
+                                    keepAliveSseStream.push('data: [DONE]\n\n');
+                                    keepAliveSseStream.push(null);
+                                } catch (pushError) {
+                                    console.error("KEEPALIVE: Failed to send error response:", pushError);
+                                }
                             }
                         }
-                    }
-                }, 1000); // 1 second delay to establish heartbeat
+                    }, 100); // Small delay to ensure heartbeat is established
+                } catch (error) {
+                    console.error("Error in KEEPALIVE setup:", error);
+                    cleanup();
+                }
 
             } else { // Standard (non-KEEPALIVE) Gemini and Vertex streams
                 if (!geminiResponse || !geminiResponse.body || typeof geminiResponse.body.pipe !== 'function') {
