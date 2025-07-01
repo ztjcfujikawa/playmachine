@@ -130,9 +130,7 @@ router.post('/chat/completions', async (req, res, next) => {
         }
 
         // Destructure the successful result
-        // For KEEPALIVE, `result.response` might be undefined initially if we change it,
-        // but `result.getResponsePromise` will exist.
-        const { response: geminiResponse, selectedKeyId, modelCategory, getResponsePromise } = result;
+        const { response: geminiResponse, selectedKeyId, modelCategory } = result;
 
         // --- Handle Response ---
 
@@ -461,9 +459,9 @@ router.post('/chat/completions', async (req, res, next) => {
             }
 
             // Check if this is a KEEPALIVE special response or normal streaming
-            if (result.isKeepAlive && getResponsePromise) {
+            if (result.isKeepAlive) {
                 const requestedModelIdFromKeepAlive = result.requestedModelId; // Use the one from the result object
-                console.log(`Processing KEEPALIVE mode response for model ${requestedModelIdFromKeepAlive} (will await Vertex)`);
+                console.log(`Processing KEEPALIVE mode response for model ${requestedModelIdFromKeepAlive}`);
 
                 const keepAliveSseStream = new Readable({ read() {} });
                 keepAliveSseStream.pipe(res); // Pipe to response immediately to send headers and initial keep-alives
@@ -487,14 +485,17 @@ router.post('/chat/completions', async (req, res, next) => {
                 keepAliveTimerId = setInterval(sendKeepAliveSseChunk, 5000);
                 sendKeepAliveSseChunk(); // Send first one
 
-                getResponsePromise.then(vertexResponseData => {
+                // In KEEPALIVE mode, we already have the complete response data
+                // Process it immediately instead of waiting for a promise
+                try {
                     clearInterval(keepAliveTimerId);
                     if (res.writableEnded) {
-                        console.warn("KEEPALIVE: Response stream ended before Vertex data could be sent.");
+                        console.warn("KEEPALIVE: Response stream ended before data could be sent.");
                         return;
                     }
+
                     const openAIResponse = JSON.parse(transformUtils.transformGeminiResponseToOpenAI(
-                        vertexResponseData,
+                        geminiResponse,
                         requestedModelIdFromKeepAlive
                     ));
                     const content = openAIResponse.choices[0].message.content || "";
@@ -512,14 +513,14 @@ router.post('/chat/completions', async (req, res, next) => {
                     keepAliveSseStream.push(`data: ${JSON.stringify(completeChunk)}\n\n`);
                     keepAliveSseStream.push('data: [DONE]\n\n');
                     keepAliveSseStream.push(null);
-                }).catch(error => {
-                    console.error("Error awaiting or processing Vertex KEEPALIVE response:", error);
+                } catch (error) {
+                    console.error("Error processing KEEPALIVE response:", error);
                     clearInterval(keepAliveTimerId);
                     if (!res.writableEnded) {
                         const errorPayload = {
                             error: {
-                                message: error.message || 'Failed to get KEEPALIVE response from Vertex',
-                                type: error.type || 'vertex_proxy_error',
+                                message: error.message || 'Failed to process KEEPALIVE response',
+                                type: error.type || 'keepalive_proxy_error',
                                 code: error.code,
                                 status: error.status
                             }
@@ -528,7 +529,7 @@ router.post('/chat/completions', async (req, res, next) => {
                         keepAliveSseStream.push('data: [DONE]\n\n');
                         keepAliveSseStream.push(null);
                     }
-                });
+                }
 
             } else { // Standard (non-KEEPALIVE) Gemini and Vertex streams
                 if (!geminiResponse || !geminiResponse.body || typeof geminiResponse.body.pipe !== 'function') {

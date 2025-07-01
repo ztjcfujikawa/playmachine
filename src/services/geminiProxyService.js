@@ -51,7 +51,7 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
         const actualModelId = isSearchModel ? requestedModelId.replace('-search', '') : requestedModelId;
         
         // If KEEPALIVE is enabled, this is a streaming request, and safety is disabled, we'll handle it specially
-        const useKeepAlive = !isSafetyEnabled && keepAliveEnabled && stream;
+        const useKeepAlive = keepAliveEnabled && stream && !isSafetyEnabled;
     
         // If using keepalive, we'll make a non-streaming request to Gemini but send streaming responses to client
         const actualStreamMode = useKeepAlive ? false : stream;
