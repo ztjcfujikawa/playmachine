@@ -17,10 +17,10 @@ const PROJECT_ID_REGEX = /^[0-9a-f]{32}$/i;
 // Default Cloudflare Gateway project ID (Replace with your actual default if needed)
 const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
 
-async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thinkingBudget) {
+async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thinkingBudget, keepAliveCallback = null) {
     // Check if KEEPALIVE mode is enabled
     const keepAliveEnabled = process.env.KEEPALIVE === '1';
-    
+
     const requestedModelId = openAIRequestBody?.model;
 
     if (!requestedModelId) {
@@ -246,6 +246,12 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
                     fetchOptions.agent = agent;
                 }
 
+                // Start keepalive heartbeat if in KEEPALIVE mode (only on first attempt)
+                if (useKeepAlive && keepAliveCallback && attempt === 1) {
+                    console.log('KEEPALIVE: Starting heartbeat before sending upstream request');
+                    keepAliveCallback.startHeartbeat();
+                }
+
                 const geminiResponse = await fetch(geminiUrl, fetchOptions); // Use fetchOptions
 
                 // 5. Handle Gemini Response Status and Errors
@@ -276,6 +282,9 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
                         // If not the last attempt, continue to the next key
                         if (attempt < MAX_RETRIES) {
                             console.warn(`Attempt ${attempt}: Received 429, trying next key...`);
+                            if (useKeepAlive && keepAliveCallback) {
+                                console.log(`KEEPALIVE: Continuing heartbeat during retry attempt ${attempt + 1}`);
+                            }
                             continue; // Go to the next iteration of the loop
                         } else {
                             console.error(`Attempt ${attempt}: Received 429, but max retries reached.`);
@@ -303,22 +312,31 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
                     if (useKeepAlive) {
                         // Get the complete non-streaming response
                         const geminiResponseData = await geminiResponse.json();
-                        
+
+                        // Stop keepalive heartbeat now that we have the response
+                        if (keepAliveCallback) {
+                            console.log('KEEPALIVE: Stopping heartbeat after receiving upstream response');
+                            keepAliveCallback.stopHeartbeat();
+                        }
+
                         // Check if it's an empty response (finishReason is OTHER and no content)
-                        const isEmptyResponse = geminiResponseData.candidates && 
-                                               geminiResponseData.candidates[0] && 
-                                               geminiResponseData.candidates[0].finishReason === "OTHER" && 
-                                               (!geminiResponseData.candidates[0].content || 
-                                                !geminiResponseData.candidates[0].content.parts || 
+                        const isEmptyResponse = geminiResponseData.candidates &&
+                                               geminiResponseData.candidates[0] &&
+                                               geminiResponseData.candidates[0].finishReason === "OTHER" &&
+                                               (!geminiResponseData.candidates[0].content ||
+                                                !geminiResponseData.candidates[0].content.parts ||
                                                 geminiResponseData.candidates[0].content.parts.length === 0);
-                        
+
                         if (isEmptyResponse && attempt < MAX_RETRIES) {
                             console.log(`Detected empty response (finishReason: OTHER), attempting retry #${attempt + 1} with a new key...`);
+                            if (useKeepAlive && keepAliveCallback) {
+                                console.log(`KEEPALIVE: Continuing heartbeat during empty response retry attempt ${attempt + 1}`);
+                            }
                             // Skip this key on next attempt
                             forceNewKey = true;
                             continue; // Continue to the next attempt
                         }
-                        
+
                         console.log(`Chat completions call completed successfully.`);
 
                         // Return the complete response data, let apiV1.js handle keepalive and response sending
@@ -352,6 +370,13 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
 
         // If the loop finished without returning a success or a specific non-retryable error,
         // it means all retries resulted in 429 or we broke due to an error. Return the last recorded error.
+
+        // Stop keepalive heartbeat before returning error
+        if (useKeepAlive && keepAliveCallback) {
+            console.log('KEEPALIVE: Stopping heartbeat due to all attempts failed');
+            keepAliveCallback.stopHeartbeat();
+        }
+
         console.error(`All ${MAX_RETRIES} attempts failed. Returning last recorded error (Status: ${lastErrorStatus}).`);
         return { error: lastError, status: lastErrorStatus };
 
