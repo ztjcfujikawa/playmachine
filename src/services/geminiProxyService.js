@@ -30,7 +30,10 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
         return { error: { message: "Missing or invalid 'messages' field in request body" }, status: 400 };
     }
 
-    const MAX_RETRIES = 3;
+    // Allow customizable max retry count via environment variable
+    const MAX_RETRIES = parseInt(process.env.MAX_RETRY) || 3;
+    console.log(`Using MAX_RETRIES: ${MAX_RETRIES} (configurable via MAX_RETRY environment variable)`);
+
     let lastError = null;
     let lastErrorStatus = 500;
     let modelInfo;
@@ -270,36 +273,35 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
                     if (!lastError.code) lastError.code = geminiResponse.status;
 
 
-                    // Handle specific errors impacting key status
+                    // Handle all errors with retry mechanism
                     if (geminiResponse.status === 429) {
                         // Pass the full parsed error object (lastError) which may contain quotaId
                         console.log(`429 error details: ${JSON.stringify(lastError)}`);
-                        
+
                         // Record 429 for the key - use actualModelId for consistent counting
                         geminiKeyService.handle429Error(selectedKey.id, modelCategory, actualModelId, lastError)
                             .catch(err => console.error(`Error handling 429 for key ${selectedKey.id} in background:`, err));
-
-                        // If not the last attempt, continue to the next key
-                        if (attempt < MAX_RETRIES) {
-                            console.warn(`Attempt ${attempt}: Received 429, trying next key...`);
-                            if (useKeepAlive && keepAliveCallback) {
-                                console.log(`KEEPALIVE: Continuing heartbeat during retry attempt ${attempt + 1}`);
-                            }
-                            continue; // Go to the next iteration of the loop
-                        } else {
-                            console.error(`Attempt ${attempt}: Received 429, but max retries reached.`);
-                            // Fall through to return the last recorded 429 error after the loop
-                        }
                     } else if (geminiResponse.status === 401 || geminiResponse.status === 403) {
                         // Record persistent error for the key
                         geminiKeyService.recordKeyError(selectedKey.id, geminiResponse.status)
                              .catch(err => console.error(`Error recording key error ${geminiResponse.status} for key ${selectedKey.id} in background:`, err));
-                        // Do not retry for 401/403, break and return this error
-                        break;
                     } else {
-                         // For other errors (400, 500, etc.), don't retry, break and return the error
-                         console.error(`Attempt ${attempt}: Received non-retryable error ${geminiResponse.status}.`);
-                         break;
+                        // Record error for other status codes (400, 500, etc.)
+                        console.log(`${geminiResponse.status} error details: ${JSON.stringify(lastError)}`);
+                        geminiKeyService.recordKeyError(selectedKey.id, geminiResponse.status)
+                             .catch(err => console.error(`Error recording key error ${geminiResponse.status} for key ${selectedKey.id} in background:`, err));
+                    }
+
+                    // Retry all errors if not the last attempt
+                    if (attempt < MAX_RETRIES) {
+                        console.warn(`Attempt ${attempt}: Received ${geminiResponse.status} error, trying next key...`);
+                        if (useKeepAlive && keepAliveCallback) {
+                            console.log(`KEEPALIVE: Continuing heartbeat during retry attempt ${attempt + 1}`);
+                        }
+                        continue; // Go to the next iteration of the loop
+                    } else {
+                        console.error(`Attempt ${attempt}: Received ${geminiResponse.status} error, but max retries (${MAX_RETRIES}) reached.`);
+                        // Fall through to return the last recorded error after the loop
                     }
                 } else {
                     // 6. Process Successful Response
