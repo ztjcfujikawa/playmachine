@@ -63,9 +63,24 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
         const modelLookupId = isSearchModel ? actualModelId : requestedModelId;
         modelInfo = modelsConfig[modelLookupId];
         if (!modelInfo) {
-            return { error: { message: `Model '${modelLookupId}' is not configured in the proxy.` }, status: 400 };
+            // If model is not configured, infer category from model name
+            let inferredCategory;
+            if (modelLookupId.includes('flash')) {
+                inferredCategory = 'Flash';
+            } else if (modelLookupId.includes('pro')) {
+                inferredCategory = 'Pro';
+            } else {
+                // Default to Flash for unknown models (most common case)
+                inferredCategory = 'Flash';
+            }
+            console.log(`Model ${modelLookupId} not configured, inferred category: ${inferredCategory}`);
+
+            // Create a temporary model info object
+            modelInfo = { category: inferredCategory };
+            modelCategory = inferredCategory;
+        } else {
+            modelCategory = modelInfo.category;
         }
-        modelCategory = modelInfo.category;
 
         // --- Retry Loop ---
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {

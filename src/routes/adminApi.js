@@ -139,7 +139,20 @@ router.post('/test-gemini-key', async (req, res, next) => {
 
         // Fetch model category for potential usage increment
         const modelsConfig = await configService.getModelsConfig();
-        const modelCategory = modelsConfig[modelId]?.category;
+        let modelCategory = modelsConfig[modelId]?.category;
+
+        // If model is not configured, infer category from model name
+        if (!modelCategory) {
+            if (modelId.includes('flash')) {
+                modelCategory = 'Flash';
+            } else if (modelId.includes('pro')) {
+                modelCategory = 'Pro';
+            } else {
+                // Default to Flash for unknown models (most common case)
+                modelCategory = 'Flash';
+            }
+            console.log(`Model ${modelId} not configured, inferred category: ${modelCategory}`);
+        }
 
         const testGeminiRequestBody = { contents: [{ role: "user", parts: [{ text: "Hi" }] }] };
         const baseUrl = getGeminiBaseUrl();
@@ -280,6 +293,19 @@ router.post('/clear-key-error', async (req, res, next) => {
          if (error.message.includes('not found')) {
             return res.status(404).json({ error: error.message });
         }
+        next(error);
+    }
+});
+
+router.delete('/error-keys', async (req, res, next) => {
+    try {
+        const result = await geminiKeyService.deleteAllErrorKeys();
+        res.json({
+            success: true,
+            deletedCount: result.deletedCount,
+            deletedKeys: result.deletedKeys
+        });
+    } catch (error) {
         next(error);
     }
 });

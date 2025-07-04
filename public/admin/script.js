@@ -45,6 +45,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const moonIcon = document.getElementById('moon-icon');
     // Run All Test Elements
     const runAllTestBtn = document.getElementById('run-all-test-btn');
+    const cleanErrorKeysBtn = document.getElementById('clean-error-keys-btn');
+    const geminiKeysActionsDiv = document.getElementById('gemini-keys-actions');
     const testProgressArea = document.getElementById('test-progress-area');
     const cancelAllTestBtn = document.getElementById('cancel-all-test-btn');
     const testProgressBar = document.getElementById('test-progress-bar');
@@ -361,8 +363,23 @@ async function renderGeminiKeys(keys) {
         geminiKeysListDiv.innerHTML = ''; // Clear previous list
         if (!keys || keys.length === 0) {
             geminiKeysListDiv.innerHTML = '<p class="text-gray-500">No Gemini keys configured.</p>';
+            // Hide action buttons when no keys
+            geminiKeysActionsDiv.classList.add('hidden');
             return;
         }
+
+        // Check if there are any error keys
+        const hasErrorKeys = keys.some(key => key.errorStatus === 400 || key.errorStatus === 401 || key.errorStatus === 403);
+
+        // Show/hide clean error keys button based on error keys existence
+        if (hasErrorKeys) {
+            cleanErrorKeysBtn.classList.remove('hidden');
+        } else {
+            cleanErrorKeysBtn.classList.add('hidden');
+        }
+
+        // Show action buttons when keys exist
+        geminiKeysActionsDiv.classList.remove('hidden');
 
         // Ensure models and category quotas are cached (should be loaded in initialLoad)
         if (cachedModels.length === 0) {
@@ -404,14 +421,68 @@ async function renderGeminiKeys(keys) {
         `;
         keysContainer.appendChild(statsBar);
         
-        // Create collapsible grid container
+        // Create collapsible grid container with fixed height for responsive design
         const keysGrid = document.createElement('div');
-        keysGrid.className = 'keys-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 transition-all duration-300 max-h-[60vh] overflow-y-auto';
+        // Mobile: 1 column, show 6 items (6 rows)
+        // Tablet: 2 columns, show 6 items (3 rows)
+        // Desktop: 3 columns, show 9 items (3 rows)
+        keysGrid.className = 'keys-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 transition-all duration-300 overflow-y-auto border border-gray-200 rounded-lg p-2';
+
+        // Function to calculate and apply dynamic height
+        const updateGridHeight = () => {
+            // Each card is 80px height + 16px gap between cards + 8px padding
+            const cardHeight = 80;
+            const gapSize = 16;
+            const containerPadding = 8;
+
+            // Calculate number of rows based on screen size and total keys
+            let columnsCount, maxRows, actualRows;
+
+            // Determine columns and max rows based on screen size
+            if (window.innerWidth >= 1024) { // lg breakpoint
+                columnsCount = 3;
+                maxRows = 3; // Show max 3 rows on desktop
+            } else if (window.innerWidth >= 768) { // md breakpoint
+                columnsCount = 2;
+                maxRows = 3; // Show max 3 rows on tablet
+            } else {
+                columnsCount = 1;
+                maxRows = 6; // Show max 6 rows on mobile
+            }
+
+            // Calculate actual rows needed
+            actualRows = Math.ceil(totalKeys / columnsCount);
+
+            // Use the smaller of actual rows needed or max rows allowed
+            const displayRows = Math.min(actualRows, maxRows);
+
+            // Calculate dynamic height: rows * cardHeight + (rows-1) * gap + padding
+            const dynamicHeight = displayRows * cardHeight + (displayRows - 1) * gapSize + containerPadding * 2;
+            const maxHeight = maxRows * cardHeight + (maxRows - 1) * gapSize + containerPadding * 2;
+
+            // Apply dynamic height with max height constraint
+            keysGrid.style.height = `${dynamicHeight}px`;
+            keysGrid.style.maxHeight = `${maxHeight}px`;
+        };
+
+        // Initial height calculation
+        updateGridHeight();
+
+        // Add resize listener to recalculate height when window size changes
+        const resizeHandler = () => updateGridHeight();
+        window.addEventListener('resize', resizeHandler);
+
+        // Store the resize handler for cleanup (optional)
+        keysGrid._resizeHandler = resizeHandler;
         
         // Set initial expanded/collapsed state based on key count
-        const isInitiallyExpanded = totalKeys <= 6;
+        // With fixed height containers, we can be more generous with initial expansion
+        // Mobile: show if <= 6 keys, Desktop: show if <= 9 keys
+        const isInitiallyExpanded = totalKeys <= 9;
         if (!isInitiallyExpanded) {
             keysGrid.classList.add('hidden');
+            // Hide action buttons when grid is initially collapsed
+            geminiKeysActionsDiv.classList.add('hidden');
         }
         
         // Update icon display
@@ -434,43 +505,56 @@ async function renderGeminiKeys(keys) {
         statsBar.addEventListener('click', (e) => {
             // 防止文本选择
             e.preventDefault();
+            const isCurrentlyHidden = keysGrid.classList.contains('hidden');
             keysGrid.classList.toggle('hidden');
             expandIcon.classList.toggle('hidden');
             collapseIcon.classList.toggle('hidden');
+
+            // Toggle action buttons visibility based on grid visibility
+            if (isCurrentlyHidden) {
+                // Grid is being shown, show action buttons
+                geminiKeysActionsDiv.classList.remove('hidden');
+            } else {
+                // Grid is being hidden, hide action buttons
+                geminiKeysActionsDiv.classList.add('hidden');
+            }
         });
 
         keys.forEach(key => {
-            // Create a simplified card for each key
+            // Create a simplified card for each key with optimized height
             const cardItem = document.createElement('div');
-            cardItem.className = 'card-item p-4 border rounded-md bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer select-none';
+            cardItem.className = 'card-item p-3 border rounded-md bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer select-none h-[80px] flex flex-col justify-between';
             cardItem.dataset.keyId = key.id;
 
-            // Show warning icon
+            // Show warning icon or usage badge
             let rightSideContent = '';
             if (key.errorStatus === 400 || key.errorStatus === 401 || key.errorStatus === 403) {
                 rightSideContent = `
-                    <div class="warning-icon-container">
-                        <svg class="w-5 h-5 text-yellow-500 warning-icon" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                    <div class="warning-icon-container flex items-center justify-center">
+                        <svg class="w-4 h-4 text-yellow-500 warning-icon" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
                             <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 3.001-1.742 3.001H4.42c-1.53 0-2.493-1.667-1.743-3.001l5.58-9.92zM10 13a1 1 0 110-2 1 1 0 010 2zm0-8a1 1 0 011 1v3a1 1 0 11-2 0V6a1 1 0 011-1z" clip-rule="evenodd"></path>
                         </svg>
                     </div>
                 `;
             } else {
                 rightSideContent = `
-                    <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                        Total: ${key.usage}
+                    <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full whitespace-nowrap">
+                        ${key.usage}
                     </div>
                 `;
             }
 
-            // Simple card content, displaying basic information only
+            // Optimized card content with better spacing and typography
             cardItem.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="font-medium text-gray-900">${key.name || key.id}</h3>
-                        <p class="text-xs text-gray-500">ID: ${key.id} | ${key.keyPreview}</p>
+                <div class="flex items-start justify-between h-full">
+                    <div class="flex-1 min-w-0 pr-2">
+                        <h3 class="font-medium text-sm text-gray-900 truncate mb-1">${key.name || key.id}</h3>
+                        <p class="text-xs text-gray-500 truncate">ID: ${key.id}</p>
+                        <p class="text-xs text-gray-400 truncate">${key.keyPreview}</p>
                     </div>
-                    ${rightSideContent}
+                    <div class="flex-shrink-0">
+                        ${rightSideContent}
+                    </div>
                 </div>
             `;
 
@@ -1296,8 +1380,8 @@ async function renderGeminiKeys(keys) {
                     const warningContainer = cardItem?.querySelector('.warning-icon-container');
                     if (warningContainer) {
                         const totalHTML = `
-                            <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                                Total: ${keyData.usage || '0'}
+                            <div class="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full whitespace-nowrap">
+                                ${keyData.usage || '0'}
                             </div>
                         `;
                         warningContainer.outerHTML = totalHTML;
@@ -1565,6 +1649,34 @@ async function renderGeminiKeys(keys) {
         testCancelRequested = true;
         testStatusText.textContent = t('cancelling_tests');
         cancelAllTestBtn.disabled = true;
+    });
+
+    // Clean Error Keys Logic
+    cleanErrorKeysBtn.addEventListener('click', async () => {
+        if (!confirm(t('clean_error_keys_confirm'))) {
+            return;
+        }
+
+        try {
+            showLoading();
+            const result = await apiFetch('/error-keys', {
+                method: 'DELETE',
+            });
+
+            if (result && result.success) {
+                if (result.deletedCount === 0) {
+                    showSuccess(t('no_error_keys_found'));
+                } else {
+                    showSuccess(t('error_keys_cleaned', result.deletedCount));
+                }
+                await loadGeminiKeys(); // Reload the keys list
+            }
+        } catch (error) {
+            console.error('Error cleaning error keys:', error);
+            showError(t('failed_to_clean_error_keys', error.message));
+        } finally {
+            hideLoading();
+        }
     });
 
     individualQuotaModal.addEventListener('click', (e) => {

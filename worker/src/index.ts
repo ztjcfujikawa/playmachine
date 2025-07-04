@@ -1320,7 +1320,20 @@ async function handleTestGeminiKey(request: Request, env: Env, ctx: ExecutionCon
 
 		// Fetch model category to pass to incrementKeyUsage
 		const modelsConfig = await env.WORKER_CONFIG_KV.get(KV_KEY_MODELS, "json") as Record<string, ModelConfig> | null;
-		const modelCategory = modelsConfig?.[body.modelId]?.category;
+		let modelCategory = modelsConfig?.[body.modelId]?.category;
+
+		// If model is not configured, infer category from model name
+		if (!modelCategory) {
+			if (body.modelId.includes('flash')) {
+				modelCategory = 'Flash';
+			} else if (body.modelId.includes('pro')) {
+				modelCategory = 'Pro';
+			} else {
+				// Default to Flash for unknown models (most common case)
+				modelCategory = 'Flash';
+			}
+			console.log(`Model ${body.modelId} not configured, inferred category: ${modelCategory}`);
+		}
 
 		const testGeminiRequestBody = {
 			contents: [{ role: "user", parts: [{ text: "Hi" }] }],
@@ -2216,6 +2229,19 @@ async function getNextAvailableGeminiKey(env: Env, ctx: ExecutionContext, reques
 		let modelCategory: 'Pro' | 'Flash' | 'Custom' | undefined = undefined;
 		if (requestedModelId) {
 			modelCategory = modelsConfig[requestedModelId]?.category;
+
+			// If model is not configured, infer category from model name
+			if (!modelCategory) {
+				if (requestedModelId.includes('flash')) {
+					modelCategory = 'Flash';
+				} else if (requestedModelId.includes('pro')) {
+					modelCategory = 'Pro';
+				} else {
+					// Default to Flash for unknown models (most common case)
+					modelCategory = 'Flash';
+				}
+				console.log(`Model ${requestedModelId} not configured, inferred category: ${modelCategory}`);
+			}
 		}
 
 		// 4. Try to find a valid key using round-robin

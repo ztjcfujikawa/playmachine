@@ -275,22 +275,98 @@ async function getErrorKeys() {
  */
 async function clearKeyError(keyId) {
     await configService.runDb('BEGIN TRANSACTION');
-    
+
     try {
         const result = await configService.runDb('UPDATE gemini_keys SET error_status = NULL WHERE id = ?', [keyId]);
         if (result.changes === 0) {
             await configService.runDb('ROLLBACK');
             throw new Error(`Key with ID '${keyId}' not found for clearing error status.`);
         }
-        
+
         await configService.runDb('COMMIT');
         console.log(`Cleared error status for key ${keyId}.`);
-        
+
         // Sync updates to GitHub - outside transaction
         await syncToGitHub();
     } catch (error) {
         await configService.runDb('ROLLBACK');
         console.error(`Error clearing error status for key ${keyId}:`, error);
+        throw error;
+    }
+}
+
+/**
+ * Deletes all keys that have error status (400, 401, or 403).
+ * @returns {Promise<{deletedCount: number, deletedKeys: Array<{id: string, name: string}>}>}
+ */
+async function deleteAllErrorKeys() {
+    await configService.runDb('BEGIN TRANSACTION');
+
+    try {
+        // First, get all error keys to return information about what was deleted
+        const errorKeys = await configService.allDb('SELECT id, name FROM gemini_keys WHERE error_status = 400 OR error_status = 401 OR error_status = 403');
+
+        if (errorKeys.length === 0) {
+            await configService.runDb('COMMIT');
+            return { deletedCount: 0, deletedKeys: [] };
+        }
+
+        // Get the error key IDs
+        const errorKeyIds = errorKeys.map(key => key.id);
+
+        // Delete all error keys from the database
+        const placeholders = errorKeyIds.map(() => '?').join(',');
+        const deleteResult = await configService.runDb(
+            `DELETE FROM gemini_keys WHERE id IN (${placeholders})`,
+            errorKeyIds
+        );
+
+        // Update the rotation list - remove all deleted keys
+        const currentListValue = await configService.getDb('SELECT value FROM settings WHERE key = ?', ['gemini_key_list']);
+        let currentList = [];
+        try {
+            currentList = currentListValue ? JSON.parse(currentListValue.value) : [];
+            if (Array.isArray(currentList)) {
+                // Filter out deleted keys
+                const updatedList = currentList.filter(keyId => !errorKeyIds.includes(keyId));
+
+                if (updatedList.length !== currentList.length) {
+                    await configService.runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                        ['gemini_key_list', JSON.stringify(updatedList)]);
+
+                    // Reset index if necessary
+                    const currentIndexValue = await configService.getDb('SELECT value FROM settings WHERE key = ?', ['gemini_key_index']);
+                    let currentIndex = currentIndexValue ? parseInt(currentIndexValue.value, 10) : 0;
+
+                    if (updatedList.length === 0) {
+                        await configService.runDb('DELETE FROM settings WHERE key = ?', ['gemini_key_index']);
+                    } else if (currentIndex >= updatedList.length) {
+                        await configService.runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                            ['gemini_key_index', '0']);
+                    }
+                }
+            }
+        } catch (listError) {
+            console.warn('Error updating rotation list during bulk delete:', listError);
+            // Continue with the transaction, as the main deletion was successful
+        }
+
+        await configService.runDb('COMMIT');
+        console.log(`Deleted ${deleteResult.changes} error keys from database.`);
+
+        // Sync updates to GitHub - outside transaction
+        await syncToGitHub();
+
+        return {
+            deletedCount: deleteResult.changes,
+            deletedKeys: errorKeys.map(key => ({
+                id: key.id,
+                name: key.name || key.id
+            }))
+        };
+    } catch (error) {
+        await configService.runDb('ROLLBACK');
+        console.error('Error deleting all error keys:', error);
         throw error;
     }
 }
@@ -392,8 +468,16 @@ async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
                 if (modelConfig) {
                     modelCategory = modelConfig.category;
                 } else {
-                    console.warn(`Model ID '${requestedModelId}' not found in config during key selection.`);
-                    // Proceed without model-specific quota checks if model unknown
+                    // If model is not configured, infer category from model name
+                    if (requestedModelId.includes('flash')) {
+                        modelCategory = 'Flash';
+                    } else if (requestedModelId.includes('pro')) {
+                        modelCategory = 'Pro';
+                    } else {
+                        // Default to Flash for unknown models (most common case)
+                        modelCategory = 'Flash';
+                    }
+                    console.log(`Model ${requestedModelId} not configured, inferred category: ${modelCategory}`);
                 }
             }
 
@@ -871,4 +955,5 @@ module.exports = {
     recordKeyError,
     getErrorKeys,
     clearKeyError,
+    deleteAllErrorKeys,
 };

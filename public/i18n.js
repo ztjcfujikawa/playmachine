@@ -41,7 +41,12 @@ class I18n {
                 'enter_gemini_api_key': '请输入 Gemini API 密钥',
                 'add_gemini_key': '添加 Gemini 密钥',
                 'run_all_test': '运行所有测试',
+                'clean_error_keys': '清理报错密钥',
                 'loading_keys': '加载密钥中...',
+                'clean_error_keys_confirm': '确定要删除所有带错误标记的 Gemini 密钥吗？此操作不可撤销。',
+                'no_error_keys_found': '没有找到带错误标记的密钥。',
+                'error_keys_cleaned': '成功清理了 {0} 个报错密钥。',
+                'failed_to_clean_error_keys': '清理报错密钥失败：{0}',
                 
                 // Worker API Keys 部分
                 'add_new_worker_key': '添加新的 Worker 密钥',
@@ -170,7 +175,12 @@ class I18n {
                 'enter_gemini_api_key': 'Enter Gemini API Key',
                 'add_gemini_key': 'Add Gemini Key',
                 'run_all_test': 'Run All Test',
+                'clean_error_keys': 'Clean Error Keys',
                 'loading_keys': 'Loading keys...',
+                'clean_error_keys_confirm': 'Are you sure you want to delete all Gemini keys with error status? This action cannot be undone.',
+                'no_error_keys_found': 'No keys with error status found.',
+                'error_keys_cleaned': 'Successfully cleaned {0} error keys.',
+                'failed_to_clean_error_keys': 'Failed to clean error keys: {0}',
                 
                 // Worker API Keys 部分
                 'add_new_worker_key': 'Add New Worker Key',

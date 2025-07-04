@@ -30,6 +30,32 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Custom scrollbar styles for keys grid */
+        .keys-grid::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .keys-grid::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+
+        .keys-grid::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .keys-grid::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* For Firefox */
+        .keys-grid {
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 #f1f5f9;
+        }
         /* Progress ring styles */
         .progress-ring__circle {
             transition: stroke-dashoffset 0.35s;
@@ -316,8 +342,10 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
                         </svg>
                     </button>
-                    <button id="logout-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded" data-i18n="logout">
-                        退出登录
+                    <button id="logout-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium p-2 rounded flex items-center justify-center h-[38px] w-[38px]" title="退出登录" data-i18n-title="logout">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                        </svg>
                     </button>
                 </div>
             </div>
@@ -363,6 +391,15 @@
                 <!-- Key items will be loaded here -->
                 <p class="text-gray-500" data-i18n="loading_keys">加载密钥中...</p>
             </div>
+            <!-- Test and Clean Buttons Area -->
+            <div id="gemini-keys-actions" class="hidden mb-6 flex space-x-3">
+                <button type="button" id="run-all-test-btn" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 run-test-btn" data-i18n="run_all_test">
+                    运行所有测试
+                </button>
+                <button type="button" id="clean-error-keys-btn" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" data-i18n="clean_error_keys">
+                    清理报错密钥
+                </button>
+            </div>
             <form id="add-gemini-key-form" class="space-y-3">
                 <h3 class="text-lg font-medium" data-i18n="add_new_gemini_key">添加新的 Gemini 密钥</h3>
                 <div>
@@ -378,9 +415,6 @@
                 <div class="flex space-x-3">
                     <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" data-i18n="add_gemini_key">
                         添加 Gemini 密钥
-                    </button>
-                    <button type="button" id="run-all-test-btn" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 run-test-btn" data-i18n="run_all_test">
-                        运行所有测试
                     </button>
                 </div>
             </form>
