@@ -167,11 +167,12 @@ class I18n {
                 'max_retry_setting': '最大重试次数',
                 'max_retry_description': 'API请求失败时的最大重试次数（默认：3）',
                 'web_search_setting': '联网搜索',
-                'web_search_description': '启用后将在模型列表中显示带-search后缀的联网搜索模型'
-            },
-            en: {
-                // 登录页面
-                'password': 'Password',
+                'web_search_description': '启用后将在模型列表中显示带-search后缀的联网搜索模型',
+                'update_available': '有可用的新版本'
+             },
+             en: {
+                 // 登录页面
+                 'password': 'Password',
                 'enter_admin_password': 'Enter admin password',
                 'login': 'Login',
                 
@@ -333,11 +334,12 @@ class I18n {
                 'max_retry_setting': 'Max Retry Count',
                 'max_retry_description': 'Maximum retry attempts for failed API requests (default: 3)',
                 'web_search_setting': 'Web Search',
-                'web_search_description': 'Enable to show models with -search suffix for web search functionality'
-            }
-        };
-        
-        this.init();
+                'web_search_description': 'Enable to show models with -search suffix for web search functionality',
+                'update_available': 'A new version is available'
+             }
+         };
+         
+         this.init();
     }
     
     init() {

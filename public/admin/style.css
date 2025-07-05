@@ -539,3 +539,62 @@ body[data-theme="dark"] .bg-gray-100.text-gray-800 {
     background-color: #374151 !important;
     color: #d1d5db !important;
 }
+
+/* Update Notifier Styles */
+#update-notifier {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 18px;
+    background: linear-gradient(135deg, #ff4444, #ff6666);
+    border-radius: 9px;
+    margin-left: 12px;
+    vertical-align: text-top;
+    cursor: pointer;
+    transition: all 0.3s ease-in-out;
+    font-size: 10px;
+    font-weight: bold;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 4px rgba(255, 68, 68, 0.3);
+    position: relative;
+    transform: translateY(-2px);
+}
+
+#update-notifier:hover {
+    transform: translateY(-2px) scale(1.1);
+    box-shadow: 0 4px 8px rgba(255, 68, 68, 0.4);
+}
+
+#update-notifier.hidden {
+    display: none;
+}
+
+/* Update Notifier Tooltip */
+#update-notifier::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #333;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: normal;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease-in-out;
+    z-index: 1000;
+    margin-top: 5px;
+    text-shadow: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+#update-notifier:hover::after {
+    opacity: 1;
+    visibility: visible;
+}

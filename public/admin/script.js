@@ -1833,6 +1833,8 @@ async function renderGeminiKeys(keys) {
             // After loading Gemini keys, try to load available Gemini models
             await loadGeminiAvailableModels();
 
+            // Check for updates
+            await checkForUpdates();
 
         } catch (error) {
             console.error('Failed to load data:', error);
@@ -2267,3 +2269,79 @@ async function renderGeminiKeys(keys) {
         }
     }
 });
+
+    // --- Update Check Functions ---
+   /**
+    * Compares two semantic version strings.
+    * @param {string} v1 - The first version string.
+    * @param {string} v2 - The second version string.
+    * @returns {number} 1 if v1 > v2, -1 if v1 < v2, 0 if v1 === v2.
+    */
+   function compareVersions(v1, v2) {
+       const parts1 = v1.split('.').map(Number);
+       const parts2 = v2.split('.').map(Number);
+       const len = Math.max(parts1.length, parts2.length);
+
+       for (let i = 0; i < len; i++) {
+           const p1 = parts1[i] || 0;
+           const p2 = parts2[i] || 0;
+           if (p1 > p2) return 1;
+           if (p1 < p2) return -1;
+       }
+       return 0;
+   }
+
+   async function checkForUpdates() {
+       try {
+           // 1. Fetch local version
+           const localVersionResponse = await fetch('/admin/version.txt?t=' + new Date().getTime());
+           if (!localVersionResponse.ok) {
+               console.warn('Could not fetch local version.txt');
+               return;
+           }
+           const localVersion = (await localVersionResponse.text()).trim();
+
+           // 2. Fetch latest release from GitHub
+           const githubApiResponse = await fetch('https://api.github.com/repos/dreamhartley/gemini-proxy-panel/releases/latest');
+           if (!githubApiResponse.ok) {
+               console.warn('Could not fetch latest release from GitHub.');
+               return;
+           }
+           const latestRelease = await githubApiResponse.json();
+           const latestVersion = latestRelease.tag_name.replace('v', '').trim();
+
+           // 3. Compare versions and show notifier if the latest version is greater
+           if (compareVersions(latestVersion, localVersion) > 0) {
+               const updateNotifier = document.getElementById('update-notifier');
+               if (updateNotifier) {
+                   updateNotifier.classList.remove('hidden');
+                   updateNotifier.textContent = 'New';
+                   updateNotifier.setAttribute('data-tooltip', t('update_available'));
+                   // Remove the default title to prevent browser tooltip
+                   updateNotifier.removeAttribute('title');
+               }
+           }
+       } catch (error) {
+           console.error('Error checking for updates:', error);
+       }
+   }
+
+// --- Debugging Commands ---
+window.show = function(what) {
+    if (what === 'update') {
+        const updateNotifier = document.getElementById('update-notifier');
+        if (updateNotifier) {
+            updateNotifier.classList.remove('hidden');
+            updateNotifier.textContent = 'New';
+            updateNotifier.setAttribute('data-tooltip', t('update_available'));
+            updateNotifier.removeAttribute('title');
+            console.log("Debug: Forcibly showing update notifier.");
+            return "Update notifier shown.";
+        } else {
+            const msg = "Debug Error: #update-notifier element not found.";
+            console.error(msg);
+            return msg;
+        }
+    }
+    return `Unknown command: ${what}`;
+};
