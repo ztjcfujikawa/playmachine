@@ -62,6 +62,23 @@ const allDb = (sql, params = []) => {
     });
 };
 
+/**
+ * Executes a series of database operations sequentially.
+ * @param {Function} callback A function that takes the db instance and performs operations.
+ * @returns {Promise<void>}
+ */
+const serializeDb = (callback) => {
+    return new Promise((resolve, reject) => {
+        db.serialize(() => {
+            try {
+                callback();
+                resolve();
+            } catch (err) {
+                reject(err);
+            }
+        });
+    });
+};
 
 // --- Settings Management (Generic Key-Value) ---
 
@@ -452,4 +469,5 @@ module.exports = {
     runDb,
     getDb,
     allDb,
+    serializeDb,
 };

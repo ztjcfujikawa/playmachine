@@ -300,7 +300,8 @@ async function clearKeyError(keyId) {
  * @returns {Promise<{deletedCount: number, deletedKeys: Array<{id: string, name: string}>}>}
  */
 async function deleteAllErrorKeys() {
-    await configService.runDb('BEGIN TRANSACTION');
+    await configService.serializeDb(async () => {
+        await configService.runDb('BEGIN TRANSACTION');
 
     try {
         // First, get all error keys to return information about what was deleted
@@ -369,6 +370,7 @@ async function deleteAllErrorKeys() {
         console.error('Error deleting all error keys:', error);
         throw error;
     }
+    });
 }
 
 /**
@@ -619,72 +621,74 @@ async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
  * @returns {Promise<void>}
  */
 async function incrementKeyUsage(keyId, modelId, category) {
-    // Start a transaction for atomic update
-    await configService.runDb('BEGIN TRANSACTION');
-    
-    try {
-        // Get the most current key data within the transaction
-        const keyRow = await configService.getDb('SELECT usage_date, model_usage, category_usage, consecutive_429_counts FROM gemini_keys WHERE id = ?', [keyId]);
-        if (!keyRow) {
+    await configService.serializeDb(async () => {
+        // Start a transaction for atomic update
+        await configService.runDb('BEGIN TRANSACTION');
+        
+        try {
+            // Get the most current key data within the transaction
+            const keyRow = await configService.getDb('SELECT usage_date, model_usage, category_usage, consecutive_429_counts FROM gemini_keys WHERE id = ?', [keyId]);
+            if (!keyRow) {
+                await configService.runDb('ROLLBACK');
+                console.warn(`Cannot increment usage: Key info not found for ID: ${keyId}`);
+                return;
+            }
+
+            const todayInLA = getTodayInLA();
+            let modelUsage = JSON.parse(keyRow.model_usage || '{}');
+            let categoryUsage = JSON.parse(keyRow.category_usage || '{}');
+            let consecutive429Counts = {}; // Reset 429 on successful usage increment
+            let usageDate = keyRow.usage_date;
+
+            // Reset counters if it's a new day
+            if (usageDate !== todayInLA) {
+                console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage.`);
+                usageDate = todayInLA;
+                modelUsage = {};
+                categoryUsage = { pro: 0, flash: 0 };
+                // 429 counts are already reset above
+            }
+
+            // Increment model-specific usage
+            if (modelId) {
+                modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
+            }
+
+            // Increment category-specific usage
+            if (category === 'Pro') {
+                categoryUsage.pro = (categoryUsage.pro || 0) + 1;
+            } else if (category === 'Flash') {
+                categoryUsage.flash = (categoryUsage.flash || 0) + 1;
+            }
+
+            // Update the database within the transaction
+            const sql = `
+                UPDATE gemini_keys
+                SET usage_date = ?, model_usage = ?, category_usage = ?, consecutive_429_counts = ?
+                WHERE id = ?
+            `;
+            await configService.runDb(sql, [
+                usageDate,
+                JSON.stringify(modelUsage),
+                JSON.stringify(categoryUsage),
+                JSON.stringify(consecutive429Counts), // Store empty object (reset counters)
+                keyId
+            ]);
+            
+            // Commit the transaction after successful update
+            await configService.runDb('COMMIT');
+            
+            console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
+            
+            // Sync updates to GitHub - outside transaction
+            await syncToGitHub();
+        } catch (e) {
+            // Rollback the transaction if any error occurs
             await configService.runDb('ROLLBACK');
-            console.warn(`Cannot increment usage: Key info not found for ID: ${keyId}`);
-            return;
+            console.error(`Failed to increment usage for key ${keyId}:`, e);
+            // Don't rethrow, allow request to potentially succeed anyway
         }
-
-        const todayInLA = getTodayInLA();
-        let modelUsage = JSON.parse(keyRow.model_usage || '{}');
-        let categoryUsage = JSON.parse(keyRow.category_usage || '{}');
-        let consecutive429Counts = {}; // Reset 429 on successful usage increment
-        let usageDate = keyRow.usage_date;
-
-        // Reset counters if it's a new day
-        if (usageDate !== todayInLA) {
-            console.log(`Date change detected for key ${keyId} (${usageDate} → ${todayInLA}). Resetting usage.`);
-            usageDate = todayInLA;
-            modelUsage = {};
-            categoryUsage = { pro: 0, flash: 0 };
-            // 429 counts are already reset above
-        }
-
-        // Increment model-specific usage
-        if (modelId) {
-            modelUsage[modelId] = (modelUsage[modelId] || 0) + 1;
-        }
-
-        // Increment category-specific usage
-        if (category === 'Pro') {
-            categoryUsage.pro = (categoryUsage.pro || 0) + 1;
-        } else if (category === 'Flash') {
-            categoryUsage.flash = (categoryUsage.flash || 0) + 1;
-        }
-
-        // Update the database within the transaction
-        const sql = `
-            UPDATE gemini_keys
-            SET usage_date = ?, model_usage = ?, category_usage = ?, consecutive_429_counts = ?
-            WHERE id = ?
-        `;
-        await configService.runDb(sql, [
-            usageDate,
-            JSON.stringify(modelUsage),
-            JSON.stringify(categoryUsage),
-            JSON.stringify(consecutive429Counts), // Store empty object (reset counters)
-            keyId
-        ]);
-        
-        // Commit the transaction after successful update
-        await configService.runDb('COMMIT');
-        
-        console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
-        
-        // Sync updates to GitHub - outside transaction
-        await syncToGitHub();
-    } catch (e) {
-        // Rollback the transaction if any error occurs
-        await configService.runDb('ROLLBACK');
-        console.error(`Failed to increment usage for key ${keyId}:`, e);
-        // Don't rethrow, allow request to potentially succeed anyway
-    }
+    });
 }
 
 /**
