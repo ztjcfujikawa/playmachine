@@ -43,6 +43,29 @@ class I18n {
                 'run_all_test': '运行所有测试',
                 'clean_error_keys': '清理报错密钥',
                 'loading_keys': '加载密钥中...',
+
+                // Vertex AI 配置部分
+                'current_vertex_config': '当前 Vertex 配置',
+                'loading_vertex_config': '加载配置中...',
+                'vertex_config_title': 'Vertex AI 配置',
+                'auth_mode': '认证模式',
+                'express_mode': '快捷模式 (API Key)',
+                'service_account_mode': '服务账号 (JSON)',
+                'express_api_key': 'Express API Key',
+                'enter_express_api_key': '请输入 Vertex AI Express API Key',
+                'express_api_key_help': '用于 Vertex AI Express Mode 的 API Key',
+                'service_account_json': 'Service Account JSON',
+                'enter_vertex_json': '请输入 Vertex AI Service Account JSON',
+                'vertex_json_help': '完整的 Google Cloud Service Account JSON 配置',
+                'save_vertex_config': '保存 Vertex 配置',
+                'test_vertex_config': '测试配置',
+                'clear_vertex_config': '清除配置',
+                'no_vertex_config': '未配置 Vertex AI',
+                'project_id': '项目 ID',
+                'client_email': '客户端邮箱',
+                'api_key': 'API Key',
+                'invalid_json': '无效的 JSON 配置',
+                'vertex_config_overwrite_confirm': '检测到已存在 Vertex 配置，是否要覆盖当前配置？',
                 'clean_error_keys_confirm': '确定要删除所有带错误标记的 Gemini 密钥吗？此操作不可撤销。',
                 'no_error_keys_found': '没有找到带错误标记的密钥。',
                 'error_keys_cleaned': '成功清理了 {0} 个报错密钥。',
@@ -135,7 +158,16 @@ class I18n {
                 'test_failed_network': '测试失败：网络错误 - {0}',
                 'unknown_error': '未知错误',
                 'test_run_cancelled': '测试运行已取消。',
-                'failed_to_run_tests': '运行所有测试失败：{0}'
+                'failed_to_run_tests': '运行所有测试失败：{0}',
+
+                // 系统设置
+                'system_settings': '系统设置',
+                'keepalive_setting': 'KEEPALIVE 模式',
+                'keepalive_description': '启用后将使用保持连接模式处理请求',
+                'max_retry_setting': '最大重试次数',
+                'max_retry_description': 'API请求失败时的最大重试次数（默认：3）',
+                'web_search_setting': '联网搜索',
+                'web_search_description': '启用后将在模型列表中显示带-search后缀的联网搜索模型'
             },
             en: {
                 // 登录页面
@@ -181,7 +213,30 @@ class I18n {
                 'no_error_keys_found': 'No keys with error status found.',
                 'error_keys_cleaned': 'Successfully cleaned {0} error keys.',
                 'failed_to_clean_error_keys': 'Failed to clean error keys: {0}',
-                
+
+                // Vertex AI Configuration
+                'current_vertex_config': 'Current Vertex Configuration',
+                'loading_vertex_config': 'Loading configuration...',
+                'vertex_config_title': 'Vertex AI Configuration',
+                'auth_mode': 'Authentication Mode',
+                'express_mode': 'Express Mode (API Key)',
+                'service_account_mode': 'Service Account (JSON)',
+                'express_api_key': 'Express API Key',
+                'enter_express_api_key': 'Enter Vertex AI Express API Key',
+                'express_api_key_help': 'API Key for Vertex AI Express Mode',
+                'service_account_json': 'Service Account JSON',
+                'enter_vertex_json': 'Enter Vertex AI Service Account JSON',
+                'vertex_json_help': 'Complete Google Cloud Service Account JSON configuration',
+                'save_vertex_config': 'Save Vertex Configuration',
+                'test_vertex_config': 'Test Configuration',
+                'clear_vertex_config': 'Clear Configuration',
+                'no_vertex_config': 'Vertex AI not configured',
+                'project_id': 'Project ID',
+                'client_email': 'Client Email',
+                'api_key': 'API Key',
+                'invalid_json': 'Invalid JSON configuration',
+                'vertex_config_overwrite_confirm': 'Existing Vertex configuration detected. Do you want to overwrite the current configuration?',
+
                 // Worker API Keys 部分
                 'add_new_worker_key': 'Add New Worker Key',
                 'generate_or_enter_key': 'Generate or enter a strong key',
@@ -269,7 +324,16 @@ class I18n {
                 'test_failed_network': 'Test failed: Network error - {0}',
                 'unknown_error': 'Unknown error',
                 'test_run_cancelled': 'Test run was cancelled.',
-                'failed_to_run_tests': 'Failed to run all tests: {0}'
+                'failed_to_run_tests': 'Failed to run all tests: {0}',
+
+                // System Settings
+                'system_settings': 'System Settings',
+                'keepalive_setting': 'KEEPALIVE Mode',
+                'keepalive_description': 'Enable keep-alive mode for request processing',
+                'max_retry_setting': 'Max Retry Count',
+                'max_retry_description': 'Maximum retry attempts for failed API requests (default: 3)',
+                'web_search_setting': 'Web Search',
+                'web_search_description': 'Enable to show models with -search suffix for web search functionality'
             }
         };
         
@@ -279,77 +343,25 @@ class I18n {
     init() {
         // 检测浏览器语言
         this.detectLanguage();
-        
-        // 创建语言切换按钮
-        this.createLanguageToggle();
-        
+
         // 应用翻译
         this.applyTranslations();
-        
+
         // 监听语言变化
         this.setupLanguageChangeListener();
     }
     
     detectLanguage() {
-        // 首先检查本地存储
-        const savedLanguage = localStorage.getItem('preferred-language');
-        if (savedLanguage && this.translations[savedLanguage]) {
-            this.currentLanguage = savedLanguage;
-            return;
-        }
-        
-        // 检测浏览器语言
+        // 检测浏览器语言，不再使用本地存储
         const browserLanguage = navigator.language || navigator.userLanguage;
         if (browserLanguage.startsWith('zh')) {
             this.currentLanguage = 'zh';
         } else {
             this.currentLanguage = 'en';
         }
-        
-        // 保存到本地存储
-        localStorage.setItem('preferred-language', this.currentLanguage);
     }
     
-    createLanguageToggle() {
-        // 查找深色模式切换按钮的容器
-        const darkModeContainer = document.querySelector('#dark-mode-toggle')?.parentElement;
-        if (!darkModeContainer) return;
-        
-        // 创建语言切换按钮
-        const languageToggle = document.createElement('button');
-        languageToggle.id = 'language-toggle';
-        languageToggle.className = 'bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium p-2 rounded flex items-center justify-center h-[38px] w-[38px]';
-        languageToggle.innerHTML = this.currentLanguage === 'zh' ? '中' : 'EN';
-        languageToggle.title = this.currentLanguage === 'zh' ? '切换到英文' : 'Switch to Chinese';
-        
-        // 插入到深色模式按钮之前
-        darkModeContainer.insertBefore(languageToggle, darkModeContainer.firstChild);
-        
-        // 添加点击事件
-        languageToggle.addEventListener('click', () => {
-            this.toggleLanguage();
-        });
-    }
-    
-    toggleLanguage() {
-        this.currentLanguage = this.currentLanguage === 'zh' ? 'en' : 'zh';
-        localStorage.setItem('preferred-language', this.currentLanguage);
-        
-        // 更新按钮文本
-        const toggle = document.getElementById('language-toggle');
-        if (toggle) {
-            toggle.innerHTML = this.currentLanguage === 'zh' ? '中' : 'EN';
-            toggle.title = this.currentLanguage === 'zh' ? '切换到英文' : 'Switch to Chinese';
-        }
-        
-        // 应用翻译
-        this.applyTranslations();
-        
-        // 触发自定义事件
-        window.dispatchEvent(new CustomEvent('languageChanged', { 
-            detail: { language: this.currentLanguage } 
-        }));
-    }
+
     
     translate(key, ...args) {
         let translation = this.translations[this.currentLanguage][key] || key;

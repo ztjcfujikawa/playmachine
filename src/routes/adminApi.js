@@ -2,7 +2,8 @@ const express = require('express');
 const requireAdminAuth = require('../middleware/adminAuth');
 const configService = require('../services/configService');
 const geminiKeyService = require('../services/geminiKeyService');
-const fetch = require('node-fetch'); 
+const vertexProxyService = require('../services/vertexProxyService');
+const fetch = require('node-fetch');
 const { syncToGitHub } = require('../db');
 const proxyPool = require('../utils/proxyPool'); // Import the proxy pool module
 const router = express.Router();
@@ -443,6 +444,174 @@ router.route('/category-quotas')
              if (error.message.includes('must be non-negative numbers')) {
                  return res.status(400).json({ error: error.message });
              }
+            next(error);
+        }
+    });
+
+// --- Vertex Configuration Management --- (/api/admin/vertex-config)
+router.route('/vertex-config')
+    .get(async (req, res, next) => {
+        try {
+            const config = await configService.getSetting('vertex_config', null);
+            res.json(config);
+        } catch (error) {
+            next(error);
+        }
+    })
+    .post(async (req, res, next) => {
+        try {
+            const { expressApiKey, vertexJson } = parseBody(req);
+
+            // Validate that at least one authentication method is provided
+            if (!expressApiKey && !vertexJson) {
+                return res.status(400).json({ error: 'Either Express API Key or Vertex JSON must be provided' });
+            }
+
+            // Validate that only one authentication method is provided
+            if (expressApiKey && vertexJson) {
+                return res.status(400).json({ error: 'Only one authentication method can be configured at a time' });
+            }
+
+            let configData = {};
+
+            if (expressApiKey) {
+                // Validate Express API Key format (basic validation)
+                if (typeof expressApiKey !== 'string' || expressApiKey.trim().length === 0) {
+                    return res.status(400).json({ error: 'Express API Key must be a non-empty string' });
+                }
+                configData.expressApiKey = expressApiKey.trim();
+            }
+
+            if (vertexJson) {
+                // Validate JSON format
+                try {
+                    const jsonData = JSON.parse(vertexJson);
+
+                    // Basic validation of required fields
+                    const requiredKeys = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id"];
+                    const missingKeys = requiredKeys.filter(key => !(key in jsonData));
+
+                    if (missingKeys.length > 0) {
+                        return res.status(400).json({
+                            error: `Invalid Service Account JSON. Missing required keys: ${missingKeys.join(', ')}`
+                        });
+                    }
+
+                    if (jsonData.type !== "service_account") {
+                        return res.status(400).json({
+                            error: "Invalid Service Account JSON. 'type' must be 'service_account'"
+                        });
+                    }
+
+                    configData.vertexJson = vertexJson.trim();
+                } catch (e) {
+                    return res.status(400).json({ error: 'Invalid JSON format for Vertex configuration' });
+                }
+            }
+
+            // Save configuration to database
+            await configService.setSetting('vertex_config', configData);
+
+            // Reinitialize Vertex service with new configuration
+            await vertexProxyService.reinitializeWithDatabaseConfig();
+
+            res.json({ success: true, message: 'Vertex configuration saved successfully' });
+        } catch (error) {
+            next(error);
+        }
+    })
+    .delete(async (req, res, next) => {
+        try {
+            // Clear the configuration
+            await configService.setSetting('vertex_config', null);
+
+            // Reinitialize Vertex service to clear configuration
+            await vertexProxyService.reinitializeWithDatabaseConfig();
+
+            res.json({ success: true, message: 'Vertex configuration cleared successfully' });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+// Test Vertex Configuration
+router.post('/vertex-config/test', async (req, res, next) => {
+    try {
+        // Get current configuration
+        const config = await configService.getSetting('vertex_config', null);
+
+        if (!config || (!config.expressApiKey && !config.vertexJson)) {
+            return res.status(400).json({ error: 'No Vertex configuration found. Please configure Vertex first.' });
+        }
+
+        // Test the configuration by checking if Vertex is enabled
+        const isEnabled = vertexProxyService.isVertexEnabled();
+        const supportedModels = vertexProxyService.getVertexSupportedModels();
+
+        if (!isEnabled || supportedModels.length === 0) {
+            return res.status(400).json({ error: 'Vertex configuration test failed. Service is not properly initialized.' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Vertex configuration test successful',
+            supportedModels: supportedModels.length,
+            authMode: config.expressApiKey ? 'Express Mode' : 'Service Account'
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// --- System Settings Management --- (/api/admin/system-settings)
+router.route('/system-settings')
+    .get(async (req, res, next) => {
+        try {
+            // Get settings from database, fallback to environment variables
+            const keepalive = await configService.getSetting('keepalive', process.env.KEEPALIVE || '0');
+            const maxRetry = await configService.getSetting('max_retry', process.env.MAX_RETRY || '3');
+            const webSearch = await configService.getSetting('web_search', '0');
+
+            // Ensure consistent data types
+            res.json({
+                keepalive: String(keepalive), // Ensure it's a string
+                maxRetry: parseInt(maxRetry) || 3,
+                webSearch: String(webSearch)
+            });
+        } catch (error) {
+            next(error);
+        }
+    })
+    .post(async (req, res, next) => {
+        try {
+            const { keepalive, maxRetry, webSearch } = parseBody(req);
+
+            // Validate inputs
+            if (keepalive !== '0' && keepalive !== '1') {
+                return res.status(400).json({ error: 'KEEPALIVE must be "0" or "1"' });
+            }
+
+            const maxRetryNum = parseInt(maxRetry);
+            if (isNaN(maxRetryNum) || maxRetryNum < 0 || maxRetryNum > 10) {
+                return res.status(400).json({ error: 'MAX_RETRY must be a number between 0 and 10' });
+            }
+
+            if (webSearch !== '0' && webSearch !== '1') {
+                return res.status(400).json({ error: 'WEB_SEARCH must be "0" or "1"' });
+            }
+
+            // Save to database
+            await configService.setSetting('keepalive', keepalive);
+            await configService.setSetting('max_retry', maxRetryNum.toString());
+            await configService.setSetting('web_search', webSearch);
+
+            res.json({
+                success: true,
+                keepalive: keepalive,
+                maxRetry: maxRetryNum,
+                webSearch: webSearch
+            });
+        } catch (error) {
             next(error);
         }
     });

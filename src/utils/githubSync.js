@@ -26,6 +26,11 @@ class GitHubSync {
       });
     }
 
+    // Log if encryption is enabled with a valid key
+    if (this.isConfigured() && this.isEncryptionEnabled()) {
+      console.log(`Using encrypt key: ${this.encryptKey}`);
+    }
+
     this.initialSyncCompleted = false;
     
     // Sync scheduling variables

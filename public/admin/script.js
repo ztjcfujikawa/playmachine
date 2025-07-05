@@ -15,6 +15,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const workerKeysListDiv = document.getElementById('worker-keys-list');
     const addWorkerKeyForm = document.getElementById('add-worker-key-form');
     const generateWorkerKeyBtn = document.getElementById('generate-worker-key');
+
+    // Tab elements
+    const geminiTab = document.getElementById('gemini-tab');
+    const vertexTab = document.getElementById('vertex-tab');
+    const geminiContent = document.getElementById('gemini-content');
+    const vertexContent = document.getElementById('vertex-content');
+
+    // Vertex configuration elements
+    const vertexConfigForm = document.getElementById('vertex-config-form');
+    const vertexConfigDisplay = document.getElementById('vertex-config-display');
+    const vertexConfigInfo = document.getElementById('vertex-config-info');
+    const vertexStatus = document.getElementById('vertex-status');
+    const testVertexConfigBtn = document.getElementById('test-vertex-config');
+    const clearVertexConfigBtn = document.getElementById('clear-vertex-config');
     const workerKeyValueInput = document.getElementById('worker-key-value');
     const modelsListDiv = document.getElementById('models-list');
     const addModelForm = document.getElementById('add-model-form');
@@ -1906,7 +1920,350 @@ async function renderGeminiKeys(keys) {
         }, authCheckInterval);
     }
 
+    // --- Tab Switching Functions ---
+    function switchTab(tabName) {
+        // Update tab buttons
+        document.querySelectorAll('.api-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+
+        // Update tab content
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.add('hidden');
+        });
+        document.getElementById(`${tabName}-content`).classList.remove('hidden');
+    }
+
+    // --- Vertex Configuration Functions ---
+    async function loadVertexConfig() {
+        try {
+            const config = await apiFetch('/vertex-config');
+            if (config) {
+                renderVertexConfig(config);
+            } else {
+                renderVertexConfig(null);
+            }
+        } catch (error) {
+            console.error('Error loading Vertex config:', error);
+            renderVertexConfig(null);
+        }
+    }
+
+    function renderVertexConfig(config) {
+        if (!config || (!config.expressApiKey && !config.vertexJson)) {
+            vertexConfigInfo.innerHTML = '<p class="text-gray-500" data-i18n="no_vertex_config"></p>';
+            vertexStatus.innerHTML = '<span class="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full" data-i18n="disabled"></span>';
+
+            // Clear form
+            document.getElementById('express-api-key').value = '';
+            document.getElementById('vertex-json').value = '';
+            document.querySelector('input[name="auth_mode"][value="service_account"]').checked = true;
+            toggleAuthMode();
+
+            // Apply translations
+            if (window.i18n) {
+                window.i18n.applyTranslations();
+            }
+            return;
+        }
+
+        // Update status
+        vertexStatus.innerHTML = '<span class="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full" data-i18n="enabled"></span>';
+
+        // Update info display
+        if (config.expressApiKey) {
+            vertexConfigInfo.innerHTML = `
+                <p><strong data-i18n="auth_mode"></strong>: <span data-i18n="express_mode"></span></p>
+                <p><strong data-i18n="api_key"></strong>: ${config.expressApiKey.substring(0, 10)}...${config.expressApiKey.substring(config.expressApiKey.length - 4)}</p>
+            `;
+
+            // Don't populate form fields when displaying existing config
+            // This ensures the form is clean for new input
+            document.querySelector('input[name="auth_mode"][value="express"]').checked = true;
+            document.getElementById('express-api-key').value = '';
+            document.getElementById('vertex-json').value = '';
+        } else if (config.vertexJson) {
+            try {
+                const jsonData = JSON.parse(config.vertexJson);
+                vertexConfigInfo.innerHTML = `
+                    <p><strong data-i18n="auth_mode"></strong>: <span data-i18n="service_account_mode"></span></p>
+                    <p><strong data-i18n="project_id"></strong>: ${jsonData.project_id || 'N/A'}</p>
+                    <p><strong data-i18n="client_email"></strong>: ${jsonData.client_email || 'N/A'}</p>
+                `;
+
+                // Don't populate form fields when displaying existing config
+                document.querySelector('input[name="auth_mode"][value="service_account"]').checked = true;
+                document.getElementById('express-api-key').value = '';
+                document.getElementById('vertex-json').value = '';
+            } catch (e) {
+                vertexConfigInfo.innerHTML = '<p class="text-red-500" data-i18n="invalid_json"></p>';
+            }
+        }
+
+        toggleAuthMode();
+
+        // Apply translations
+        if (window.i18n) {
+            window.i18n.applyTranslations();
+        }
+    }
+
+    function toggleAuthMode() {
+        const authMode = document.querySelector('input[name="auth_mode"]:checked').value;
+        const expressSection = document.getElementById('express-api-key-section');
+        const serviceAccountSection = document.getElementById('service-account-section');
+
+        if (authMode === 'service_account') {
+            serviceAccountSection.classList.remove('hidden');
+            expressSection.classList.add('hidden');
+        } else {
+            expressSection.classList.remove('hidden');
+            serviceAccountSection.classList.add('hidden');
+        }
+    }
+
+    async function saveVertexConfig(configData) {
+        try {
+            const result = await apiFetch('/vertex-config', {
+                method: 'POST',
+                body: JSON.stringify(configData),
+            });
+
+            if (result && result.success) {
+                showSuccess('Vertex 配置保存成功！');
+
+                // Clear the form after successful save
+                document.getElementById('express-api-key').value = '';
+                document.getElementById('vertex-json').value = '';
+
+                await loadVertexConfig(); // Reload to show updated config
+                return true;
+            } else {
+                showError('保存 Vertex 配置失败');
+                return false;
+            }
+        } catch (error) {
+            console.error('Error saving Vertex config:', error);
+            showError('保存 Vertex 配置时发生错误');
+            return false;
+        }
+    }
+
+    async function testVertexConfig() {
+        try {
+            showLoading();
+            const result = await apiFetch('/vertex-config/test', {
+                method: 'POST',
+            });
+
+            hideLoading();
+
+            if (result && result.success) {
+                showSuccess('Vertex 配置测试成功！');
+            } else {
+                showError(result?.error || '测试 Vertex 配置失败');
+            }
+        } catch (error) {
+            hideLoading();
+            console.error('Error testing Vertex config:', error);
+            showError('测试 Vertex 配置时发生错误');
+        }
+    }
+
+    async function clearVertexConfig() {
+        if (!confirm('确定要清除 Vertex 配置吗？')) {
+            return;
+        }
+
+        try {
+            const result = await apiFetch('/vertex-config', {
+                method: 'DELETE',
+            });
+
+            if (result && result.success) {
+                showSuccess('Vertex 配置已清除');
+                await loadVertexConfig(); // Reload to show cleared config
+            } else {
+                showError('清除 Vertex 配置失败');
+            }
+        } catch (error) {
+            console.error('Error clearing Vertex config:', error);
+            showError('清除 Vertex 配置时发生错误');
+        }
+    }
+
+    // --- Event Listeners ---
+
+    // Tab switching
+    geminiTab.addEventListener('click', () => switchTab('gemini'));
+    vertexTab.addEventListener('click', () => switchTab('vertex'));
+
+    // Authentication mode toggle
+    document.querySelectorAll('input[name="auth_mode"]').forEach(radio => {
+        radio.addEventListener('change', toggleAuthMode);
+    });
+
+    // Vertex configuration form
+    vertexConfigForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(vertexConfigForm);
+        const authMode = formData.get('auth_mode');
+
+        let configData = {};
+
+        if (authMode === 'express') {
+            const expressApiKey = formData.get('express_api_key');
+            if (!expressApiKey || !expressApiKey.trim()) {
+                showError('请输入 Express API Key');
+                return;
+            }
+            configData.expressApiKey = expressApiKey.trim();
+        } else {
+            const vertexJson = formData.get('vertex_json');
+            if (!vertexJson || !vertexJson.trim()) {
+                showError('请输入 Service Account JSON');
+                return;
+            }
+
+            // Validate JSON
+            try {
+                JSON.parse(vertexJson);
+                configData.vertexJson = vertexJson.trim();
+            } catch (e) {
+                showError('无效的 JSON 格式');
+                return;
+            }
+        }
+
+        // Check if configuration already exists
+        try {
+            const existingConfig = await apiFetch('/vertex-config');
+            if (existingConfig && (existingConfig.expressApiKey || existingConfig.vertexJson)) {
+                // Configuration exists, ask for confirmation
+                const confirmMessage = window.i18n ?
+                    window.i18n.translate('vertex_config_overwrite_confirm') :
+                    '检测到已存在 Vertex 配置，是否要覆盖当前配置？';
+
+                if (!confirm(confirmMessage)) {
+                    return; // User cancelled
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to check existing Vertex config:', error);
+            // Continue with save even if check fails
+        }
+
+        await saveVertexConfig(configData);
+    });
+
+    // Test and clear buttons
+    testVertexConfigBtn.addEventListener('click', testVertexConfig);
+    clearVertexConfigBtn.addEventListener('click', clearVertexConfig);
+
+    // Settings modal functionality
+    setupSettingsModal();
+
     initialLoad();
     initDarkMode();
     setupAuthRefresh();
+
+    // Load Vertex config after initial load
+    loadVertexConfig();
+
+    // --- Settings Modal Functions ---
+    function setupSettingsModal() {
+        const settingsButton = document.getElementById('settings-button');
+        const settingsModal = document.getElementById('settings-modal');
+        const closeModalButton = document.getElementById('close-settings-modal');
+        const cancelButton = document.getElementById('cancel-settings');
+        const settingsForm = document.getElementById('settings-form');
+        const keepaliveToggle = document.getElementById('keepalive-toggle');
+        const maxRetryInput = document.getElementById('max-retry-input');
+
+        // Open modal
+        settingsButton.addEventListener('click', () => {
+            loadSystemSettings();
+            settingsModal.classList.remove('hidden');
+        });
+
+        // Close modal
+        function closeModal() {
+            settingsModal.classList.add('hidden');
+        }
+
+        closeModalButton.addEventListener('click', closeModal);
+        cancelButton.addEventListener('click', closeModal);
+
+        // Close modal when clicking outside
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) {
+                closeModal();
+            }
+        });
+
+        // Handle form submission
+        settingsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await saveSystemSettings();
+        });
+    }
+
+    async function loadSystemSettings() {
+        try {
+            const settings = await apiFetch('/system-settings');
+            console.log('Loaded settings:', settings); // Debug log
+
+            // Set KEEPALIVE toggle
+            const keepaliveToggle = document.getElementById('keepalive-toggle');
+            keepaliveToggle.checked = settings.keepalive === '1' || settings.keepalive === 1 || settings.keepalive === true;
+
+            // Set MAX_RETRY input
+            const maxRetryInput = document.getElementById('max-retry-input');
+            maxRetryInput.value = settings.maxRetry || 3;
+
+            // Set Web Search toggle
+            const webSearchToggle = document.getElementById('web-search-toggle');
+            webSearchToggle.checked = settings.webSearch === '1' || settings.webSearch === 1 || settings.webSearch === true;
+
+        } catch (error) {
+            console.error('Error loading system settings:', error);
+            // Set default values
+            document.getElementById('keepalive-toggle').checked = false;
+            document.getElementById('max-retry-input').value = 3;
+            document.getElementById('web-search-toggle').checked = false;
+        }
+    }
+
+    async function saveSystemSettings() {
+        try {
+            const keepaliveToggle = document.getElementById('keepalive-toggle');
+            const maxRetryInput = document.getElementById('max-retry-input');
+            const webSearchToggle = document.getElementById('web-search-toggle');
+
+            const settings = {
+                keepalive: keepaliveToggle.checked ? '1' : '0',
+                maxRetry: parseInt(maxRetryInput.value) || 3,
+                webSearch: webSearchToggle.checked ? '1' : '0'
+            };
+
+            const result = await apiFetch('/system-settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(settings)
+            });
+
+            if (result.success) {
+                showSuccess('系统设置已保存');
+                document.getElementById('settings-modal').classList.add('hidden');
+            } else {
+                showError('保存系统设置失败');
+            }
+        } catch (error) {
+            console.error('Error saving system settings:', error);
+            showError('保存系统设置时发生错误');
+        }
+    }
 });

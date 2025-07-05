@@ -63,232 +63,7 @@
             transform-origin: 50% 50%;
         }
         
-        body[data-theme="dark"] {
-            background-color: #1a202c !important;
-            color: #e2e8f0 !important;
-        }
-        
-        body[data-theme="dark"] .container,
-        body[data-theme="dark"] #main-content {
-            background-color: #1a202c !important;
-        }
-        
-        body[data-theme="dark"] .bg-white,
-        body[data-theme="dark"] section,
-        body[data-theme="dark"] .modal-content,
-        body[data-theme="dark"] .card-item {
-            background-color: #2d3748 !important;
-        }
-        
-        body[data-theme="dark"] .bg-gray-100 {
-            background-color: #1a202c !important;
-        }
-        
-        body[data-theme="dark"] .text-gray-700,
-        body[data-theme="dark"] .text-gray-800,
-        body[data-theme="dark"] .text-gray-900,
-        body[data-theme="dark"] .font-medium,
-        body[data-theme="dark"] h1,
-        body[data-theme="dark"] h2,
-        body[data-theme="dark"] h3 {
-            color: #e2e8f0 !important;
-        }
-        
-        body[data-theme="dark"] .text-gray-500,
-        body[data-theme="dark"] .text-gray-600 {
-            color: #a0aec0 !important;
-        }
-        
-        body[data-theme="dark"] .border,
-        body[data-theme="dark"] input,
-        body[data-theme="dark"] select,
-        body[data-theme="dark"] textarea {
-            border-color: #4a5568 !important;
-        }
-        
-        body[data-theme="dark"] input,
-        body[data-theme="dark"] select,
-        body[data-theme="dark"] textarea {
-            background-color: #2d3748 !important;
-            color: #e2e8f0 !important;
-        }
-        
-        body[data-theme="dark"] .bg-gray-200,
-        body[data-theme="dark"] .bg-gray-300 {
-            background-color: #4a5568 !important;
-        }
-        
-        body[data-theme="dark"] .hover\:bg-gray-300:hover {
-            background-color: #2d3748 !important;
-        }
-        
-        body[data-theme="dark"] .bg-indigo-600 {
-            background-color: #4c51bf !important;
-        }
-        
-        body[data-theme="dark"] .hover\:bg-indigo-700:hover {
-            background-color: #434190 !important;
-        }
-        
-        body[data-theme="dark"] .text-indigo-600 {
-            color: #7f9cf5 !important;
-        }
-        
-        body[data-theme="dark"] .hover\:text-indigo-800:hover {
-            color: #6b46c1 !important;
-        }
-        
-        body[data-theme="dark"] .bg-blue-50,
-        body[data-theme="dark"] .bg-blue-100 {
-            background-color: #2c5282 !important;
-        }
-        
-        body[data-theme="dark"] .text-blue-800 {
-            color: #bee3f8 !important;
-        }
-        
-        body[data-theme="dark"] .text-xs.px-2.py-1.bg-blue-100.text-blue-800.rounded-full {
-            background-color: #3182ce !important; 
-            color: #ffffff !important; 
-        }
-        
-        body[data-theme="dark"] .p-4.border.rounded-md.bg-white {
-            background-color: #2d3748 !important;
-        }
-        
-        body[data-theme="dark"] .text-gray-900 {
-            color: #e2e8f0 !important;
-        }
-        
-        body[data-theme="dark"] .focus\:border-indigo-500:focus,
-        body[data-theme="dark"] .focus\:ring-indigo-500:focus {
-            border-color: #7f9cf5 !important;
-            box-shadow: 0 0 0 1px #7f9cf5 !important;
-        }
-        
-        body[data-theme="dark"] .toggle-label {
-            background-color: #4a5568 !important;
-        }
-        
-        body[data-theme="dark"] .toggle-checkbox:checked + .toggle-label {
-            background-color: #68D391 !important;
-        }
-        
-        body[data-theme="dark"] .toggle-checkbox {
-            border-color: #4a5568 !important;
-        }
-        
-        body[data-theme="dark"] .toggle-checkbox:checked {
-            border-color: #68D391 !important;
-        }
-        
-        body[data-theme="dark"] label[for^="safety-toggle"] {
-            color: #e2e8f0 !important;
-        }
-        
-        body[data-theme="dark"] .text-green-600 {
-            color: #68D391 !important;
-        }
-        
-        body[data-theme="dark"] .text-red-600 {
-            color: #F56565 !important;
-        }
-        
-        .toggle-label + span {
-            margin-left: 8px !important;
-        }
-        
-        /* Custom dropdown dark mode styles */
-        body[data-theme="dark"] #custom-model-dropdown {
-            background-color: #2d3748 !important;
-            border-color: #4a5568 !important;
-        }
-        
-        body[data-theme="dark"] #custom-model-dropdown div {
-            color: #e2e8f0 !important;
-        }
-        
-        body[data-theme="dark"] #custom-model-dropdown div:hover {
-            background-color: #4a5568 !important;
-        }
 
-        /* Dark mode button adjustments for Managed Models */
-        body[data-theme="dark"] .set-individual-quota {
-            color: #90cdf4 !important; /* Lighter blue */
-        }
-        body[data-theme="dark"] .set-individual-quota:hover {
-            color: #bee3f8 !important; /* Even lighter blue on hover */
-        }
-        body[data-theme="dark"] .delete-model {
-            color: #fbb6ce !important; /* Lighter red/pink */
-        }
-        body[data-theme="dark"] .delete-model:hover {
-            color: #fecaca !important; /* Even lighter red/pink on hover */
-        }
-
-        /* Dark mode adjustments for text-based delete buttons */
-        body[data-theme="dark"] .delete-worker-key,
-        body[data-theme="dark"] .delete-gemini-key { /* .delete-model already covered above */
-            color: #fbb6ce !important; /* Lighter red/pink */
-        }
-        body[data-theme="dark"] .delete-worker-key:hover,
-        body[data-theme="dark"] .delete-gemini-key:hover { /* .delete-model already covered above */
-            color: #fecaca !important; /* Even lighter red/pink on hover */
-        }
-
-        /* Dark mode adjustments for text-based action buttons */
-        body[data-theme="dark"] .test-gemini-key { /* .set-individual-quota already covered above */
-             color: #90cdf4 !important; /* Lighter blue */
-        }
-        body[data-theme="dark"] .test-gemini-key:hover { /* .set-individual-quota already covered above */
-             color: #bee3f8 !important; /* Even lighter blue on hover */
-        }
-
-        /* Adjust Generate Worker Key button (text-based) */
-        body[data-theme="dark"] #generate-worker-key {
-            color: #a3bffa !important; /* Lighter indigo */
-        }
-        body[data-theme="dark"] #generate-worker-key:hover {
-            color: #c3dafe !important; /* Even lighter indigo */
-        }
-
-        /* Adjust Set Category Quotas button (background) */
-        body[data-theme="dark"] #set-category-quotas-btn {
-            background-color: #4299e1 !important; /* Brighter blue */
-            color: #ffffff !important;
-        }
-        body[data-theme="dark"] #set-category-quotas-btn:hover {
-            background-color: #63b3ed !important; /* Lighter blue on hover */
-        }
-
-        /* Adjust Run Test button (background) */
-        body[data-theme="dark"] .run-test-btn {
-            background-color: #48bb78 !important; /* Brighter green */
-            color: #ffffff !important;
-        }
-        body[data-theme="dark"] .run-test-btn:hover {
-            background-color: #68d391 !important; /* Lighter green on hover */
-        }
-
-        /* Adjust Modal Cancel buttons (background) */
-        body[data-theme="dark"] #cancel-category-quotas,
-        body[data-theme="dark"] #cancel-individual-quota {
-            background-color: #4a5568 !important; /* Darker gray background */
-            color: #e2e8f0 !important; /* Light text */
-            border-color: #718096 !important; /* Gray border */
-        }
-        body[data-theme="dark"] #cancel-category-quotas:hover,
-        body[data-theme="dark"] #cancel-individual-quota:hover {
-            background-color: #718096 !important; /* Lighter gray background on hover */
-        }
-
-        /* Dark mode adjustments for Ignore Error button */
-        body[data-theme="dark"] .clear-gemini-key-error {
-            color: #faf089 !important; /* Lighter yellow (Tailwind yellow-300) */
-        }
-        body[data-theme="dark"] .clear-gemini-key-error:hover {
-            color: #f6e05e !important; 
-        }
     </style>
     <script>
         (function() {
@@ -334,6 +109,12 @@
             <div class="flex justify-between items-center mb-6">
                 <h1 class="text-2xl lg:text-3xl font-bold text-gray-800">Gemini Proxy Panel</h1>
                 <div class="flex items-center space-x-2">
+                    <button id="settings-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium p-2 rounded flex items-center justify-center h-[38px] w-[38px]" title="系统设置" data-i18n-title="system_settings">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </button>
                     <button id="dark-mode-toggle" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium p-2 rounded flex items-center justify-center h-[38px] w-[38px]">
                         <svg id="sun-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
@@ -363,9 +144,23 @@
                 <strong class="font-bold" data-i18n="success">成功:</strong>
                 <span class="block sm:inline" id="success-text"></span>
             </div>
-        <!-- Gemini API Keys Section -->
+        <!-- API Configuration Section -->
         <section class="mb-8 bg-white p-6 rounded-lg shadow">
-            <h2 class="text-xl font-semibold mb-4 text-gray-700">Gemini API Keys</h2>
+            <!-- Tab Navigation -->
+            <div class="border-b border-gray-200 mb-6">
+                <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                    <button id="gemini-tab" class="api-tab active whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm" data-tab="gemini">
+                        AI Studio
+                    </button>
+                    <button id="vertex-tab" class="api-tab whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm" data-tab="vertex">
+                        Vertex
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Gemini API Keys Tab Content -->
+            <div id="gemini-content" class="tab-content">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Gemini API Keys</h2>
             <!-- Test Progress Area -->
             <div id="test-progress-area" class="hidden mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <div class="flex items-center justify-between mb-2">
@@ -418,6 +213,71 @@
                     </button>
                 </div>
             </form>
+            </div>
+
+            <!-- Vertex Configuration Tab Content -->
+            <div id="vertex-content" class="tab-content hidden">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Vertex AI Configuration</h2>
+
+                <!-- Current Vertex Configuration Display -->
+                <div id="vertex-config-display" class="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-lg font-medium text-gray-700" data-i18n="current_vertex_config">当前 Vertex 配置</h3>
+                        <div class="flex items-center space-x-2">
+                            <span id="vertex-status" class="text-sm font-medium"></span>
+                        </div>
+                    </div>
+                    <div id="vertex-config-info" class="text-sm text-gray-600">
+                        <p data-i18n="loading_vertex_config">加载配置中...</p>
+                    </div>
+                </div>
+
+                <!-- Vertex Configuration Form -->
+                <form id="vertex-config-form" class="space-y-4">
+                    <h3 class="text-lg font-medium" data-i18n="vertex_config_title">Vertex AI 配置</h3>
+
+                    <!-- Authentication Mode Selection -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2" data-i18n="auth_mode">认证模式</label>
+                        <div class="space-y-2">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="auth_mode" value="service_account" class="form-radio" checked>
+                                <span class="ml-2 text-sm text-gray-700" data-i18n="service_account_mode">服务账号 (JSON)</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="auth_mode" value="express" class="form-radio">
+                                <span class="ml-2 text-sm text-gray-700" data-i18n="express_mode">快捷模式 (API Key)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Service Account JSON Input -->
+                    <div id="service-account-section">
+                        <label for="vertex-json" class="block text-sm font-medium text-gray-700" data-i18n="service_account_json">Service Account JSON</label>
+                        <textarea id="vertex-json" name="vertex_json" rows="8" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="请输入 Vertex AI Service Account JSON" data-i18n-placeholder="enter_vertex_json"></textarea>
+                        <p class="text-xs text-gray-500 mt-1" data-i18n="vertex_json_help">完整的 Google Cloud Service Account JSON 配置</p>
+                    </div>
+
+                    <!-- Express API Key Input -->
+                    <div id="express-api-key-section" class="hidden">
+                        <label for="express-api-key" class="block text-sm font-medium text-gray-700" data-i18n="express_api_key">Express API Key</label>
+                        <input type="text" id="express-api-key" name="express_api_key" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="请输入 Vertex AI Express API Key" data-i18n-placeholder="enter_express_api_key">
+                        <p class="text-xs text-gray-500 mt-1" data-i18n="express_api_key_help">用于 Vertex AI Express Mode 的 API Key</p>
+                    </div>
+
+                    <div class="flex space-x-3">
+                        <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" data-i18n="save_vertex_config">
+                            保存 Vertex 配置
+                        </button>
+                        <button type="button" id="test-vertex-config" class="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" data-i18n="test_vertex_config">
+                            测试配置
+                        </button>
+                        <button type="button" id="clear-vertex-config" class="inline-flex justify-center py-2 px-4 border border-red-300 shadow-sm text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" data-i18n="clear_vertex_config">
+                            清除配置
+                        </button>
+                    </div>
+                </form>
+            </div>
         </section>
         <!-- Worker API Keys Section -->
         <section class="mb-8 bg-white p-6 rounded-lg shadow">
@@ -551,6 +411,60 @@
                 </div>
             </form>
             <div id="individual-quota-error" class="text-red-500 text-sm mt-2 hidden"></div>
+        </div>
+    </div>
+
+    <!-- System Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-medium text-gray-900" data-i18n="system_settings">系统设置</h3>
+                    <button id="close-settings-modal" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <form id="settings-form" class="space-y-4">
+                    <!-- KEEPALIVE Setting -->
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <label class="text-sm font-medium text-gray-700" data-i18n="keepalive_setting">KEEPALIVE 模式</label>
+                            <p class="text-xs text-gray-500" data-i18n="keepalive_description">启用后将使用保持连接模式处理请求</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="keepalive-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <!-- Web Search Setting -->
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <label class="text-sm font-medium text-gray-700" data-i18n="web_search_setting">联网搜索</label>
+                            <p class="text-xs text-gray-500" data-i18n="web_search_description">启用后将在模型列表中显示带-search后缀的联网搜索模型</p>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="web-search-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <!-- MAX_RETRY Setting -->
+                    <div>
+                        <label for="max-retry-input" class="block text-sm font-medium text-gray-700" data-i18n="max_retry_setting">最大重试次数</label>
+                        <p class="text-xs text-gray-500 mb-2" data-i18n="max_retry_description">API请求失败时的最大重试次数（默认：3）</p>
+                        <input type="number" id="max-retry-input" min="0" max="10" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" placeholder="3">
+                    </div>
+
+                    <div class="flex justify-end space-x-3 pt-4">
+                        <button type="button" id="cancel-settings" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md" data-i18n="cancel">取消</button>
+                        <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md" data-i18n="save">保存</button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 

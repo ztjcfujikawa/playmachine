@@ -16,7 +16,7 @@ const VERTEX_SUPPORTED_MODELS = [
 ];
 
 // Default region
-const DEFAULT_REGION = 'global';
+const DEFAULT_REGION = 'us-central1';
 
 // Temporary credentials file path
 let tempCredentialsPath = null;
@@ -103,16 +103,60 @@ let isUsingExpressMode = false; // Track if we're using Express Mode
 async function initializeVertexCredentials() {
     if (isVertexInitialized) return; // Already initialized
 
-    // First check if Express Mode API Key is set (priority)
+    // First try to load configuration from database (priority)
+    let databaseConfig = null;
+    try {
+        databaseConfig = await configService.getSetting('vertex_config', null);
+    } catch (error) {
+        console.warn("Failed to load Vertex config from database, falling back to environment variables:", error);
+    }
+
+    // Check database configuration first
+    if (databaseConfig && (databaseConfig.expressApiKey || databaseConfig.vertexJson)) {
+        console.info("Using Vertex AI configuration from database");
+
+        if (databaseConfig.expressApiKey) {
+            // Use Express Mode from database
+            console.info("Using Vertex AI Express Mode with API key from database");
+            isUsingExpressMode = true;
+            isVertexInitialized = true;
+            return;
+        } else if (databaseConfig.vertexJson) {
+            // Use Service Account from database
+            try {
+                JSON.parse(databaseConfig.vertexJson); // Validate JSON
+                VERTEX_JSON_STRING = databaseConfig.vertexJson;
+                console.info("Using VERTEX credentials from database");
+
+                const createdPath = await createServiceAccountFile(VERTEX_JSON_STRING);
+                if (!createdPath) {
+                    throw new Error("createServiceAccountFile returned null or undefined.");
+                }
+                tempCredentialsPath = createdPath;
+                process.env.GOOGLE_APPLICATION_CREDENTIALS = tempCredentialsPath;
+                console.log(`Vertex AI credentials created and set from database: GOOGLE_APPLICATION_CREDENTIALS=${tempCredentialsPath}`);
+                isVertexInitialized = true;
+                return;
+            } catch (error) {
+                console.error("Failed to initialize Vertex AI credentials from database:", error);
+                // Fall through to environment variables
+            }
+        }
+    }
+
+    // Fallback to environment variables if database config is not available or invalid
+    console.info("Falling back to environment variables for Vertex AI configuration");
+
+    // Check if Express Mode API Key is set in environment
     const expressApiKey = process.env.EXPRESS_API_KEY;
     if (expressApiKey && typeof expressApiKey === 'string' && expressApiKey.trim()) {
-        console.info("Using Vertex AI Express Mode with API key");
+        console.info("Using Vertex AI Express Mode with API key from environment");
         isUsingExpressMode = true;
         isVertexInitialized = true; // Mark as initialized
         return; // No need for service account credentials
     }
 
-    // If Express Mode not available, proceed with service account credentials
+    // If Express Mode not available, proceed with service account credentials from environment
     const vertexJsonFromEnv = process.env.VERTEX;
     let potentialJsonString = null;
     let loadedFrom = ''; // Track where the JSON came from
@@ -123,7 +167,7 @@ async function initializeVertexCredentials() {
             JSON.parse(vertexJsonFromEnv);
             potentialJsonString = vertexJsonFromEnv;
             loadedFrom = 'process.env';
-            console.info("Using VERTEX credentials from process.env."); 
+            console.info("Using VERTEX credentials from process.env.");
         } catch (jsonError) {
             console.warn(`Manual .env loading: VERTEX variable from process.env is not valid JSON: ${jsonError}. Falling back to .env file.`); // Keep warn log in English
             potentialJsonString = null; // Invalidate if parse fails
@@ -518,9 +562,9 @@ function createSafetySettings(blockLevel = 'OFF') {
  */
 async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, stream, keepAliveCallback = null) {
     console.log("Using Vertex AI proxy service"); // Keep log in English
-    
-    // Whether to use KEEPALIVE in streaming mode
-    const keepAliveEnabled = process.env.KEEPALIVE === '1';
+
+    // Whether to use KEEPALIVE in streaming mode - get from database
+    const keepAliveEnabled = String(await configService.getSetting('keepalive', process.env.KEEPALIVE || '0')) === '1';
     const requestedModelId = openAIRequestBody?.model;
 
     // Validate request
@@ -561,17 +605,32 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
     try {
         // Initialize client based on authentication mode
         if (isUsingExpressMode) {
-            // Express Mode with API Key
-            const expressApiKey = process.env.EXPRESS_API_KEY;
-            if (!expressApiKey) {
-                throw new Error("EXPRESS_API_KEY is not available.");
+            // Express Mode with API Key - check database first, then environment
+            let expressApiKey = null;
+
+            try {
+                const databaseConfig = await configService.getSetting('vertex_config', null);
+                if (databaseConfig && databaseConfig.expressApiKey) {
+                    expressApiKey = databaseConfig.expressApiKey;
+                    console.log("Using Express API Key from database");
+                } else {
+                    expressApiKey = process.env.EXPRESS_API_KEY;
+                    console.log("Using Express API Key from environment");
+                }
+            } catch (error) {
+                console.warn("Failed to load Express API Key from database, using environment:", error);
+                expressApiKey = process.env.EXPRESS_API_KEY;
             }
-            
+
+            if (!expressApiKey) {
+                throw new Error("EXPRESS_API_KEY is not available in database or environment.");
+            }
+
             ai = new GoogleGenAI({
                 vertexai: true,
                 apiKey: expressApiKey
             });
-            
+
             console.log("Vertex AI Client initialized with Express Mode API Key"); // Keep log in English
         } else {
             // Standard mode with service account
@@ -1019,12 +1078,48 @@ function getVertexSupportedModels() {
  * @returns {boolean} True if Vertex AI is enabled, false otherwise.
  */
 function isVertexEnabled() {
-    // Either service account JSON or Express API Key enables Vertex
-    return !!VERTEX_JSON_STRING || !!process.env.EXPRESS_API_KEY;
+    // Check if we have service account JSON or Express API Key from any source
+    // This is a synchronous check, so we can't check database here
+    // The actual database check happens during initialization
+    return !!VERTEX_JSON_STRING || !!process.env.EXPRESS_API_KEY || isUsingExpressMode;
+}
+
+/**
+ * Reinitializes Vertex credentials with database configuration.
+ * This function is called when the configuration is updated via the admin panel.
+ */
+async function reinitializeWithDatabaseConfig() {
+    console.log("Reinitializing Vertex AI with database configuration...");
+
+    // Reset initialization state
+    isVertexInitialized = false;
+    isUsingExpressMode = false;
+    VERTEX_JSON_STRING = null;
+
+    // Clean up existing credentials file if it exists
+    if (tempCredentialsPath) {
+        try {
+            const fs = require('fs').promises;
+            await fs.unlink(tempCredentialsPath);
+            console.log("Cleaned up previous credentials file");
+        } catch (error) {
+            console.warn("Failed to clean up previous credentials file:", error);
+        }
+        tempCredentialsPath = null;
+    }
+
+    // Clear environment variable
+    delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+
+    // Reinitialize with new configuration
+    await initializeVertexCredentials();
+
+    console.log("Vertex AI reinitialization completed");
 }
 
 module.exports = {
     proxyVertexChatCompletions,
     getVertexSupportedModels,
-    isVertexEnabled // Export check function
+    isVertexEnabled, // Export check function
+    reinitializeWithDatabaseConfig // Export reinitialization function
 };

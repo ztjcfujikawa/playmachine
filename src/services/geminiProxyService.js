@@ -18,9 +18,6 @@ const PROJECT_ID_REGEX = /^[0-9a-f]{32}$/i;
 const DEFAULT_PROJECT_ID = 'db16589aa22233d56fe69a2c3161fe3c';
 
 async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thinkingBudget, keepAliveCallback = null) {
-    // Check if KEEPALIVE mode is enabled
-    const keepAliveEnabled = process.env.KEEPALIVE === '1';
-
     const requestedModelId = openAIRequestBody?.model;
 
     if (!requestedModelId) {
@@ -30,31 +27,35 @@ async function proxyChatCompletions(openAIRequestBody, workerApiKey, stream, thi
         return { error: { message: "Missing or invalid 'messages' field in request body" }, status: 400 };
     }
 
-    // Allow customizable max retry count via environment variable
-    const MAX_RETRIES = parseInt(process.env.MAX_RETRY) || 3;
-    console.log(`Using MAX_RETRIES: ${MAX_RETRIES} (configurable via MAX_RETRY environment variable)`);
-
     let lastError = null;
     let lastErrorStatus = 500;
     let modelInfo;
     let modelCategory;
     let isSafetyEnabled;
     let modelsConfig;
+    let MAX_RETRIES;
+    let keepAliveEnabled;
 
     try {
-        // Fetch model config and safety settings once before the loop
-        [modelsConfig, isSafetyEnabled] = await Promise.all([
+        // Fetch model config, safety settings, max retry setting, and keepalive setting from database
+        [modelsConfig, isSafetyEnabled, MAX_RETRIES, keepAliveEnabled] = await Promise.all([
             configService.getModelsConfig(),
-            configService.getWorkerKeySafetySetting(workerApiKey) // Get safety setting for this worker key
+            configService.getWorkerKeySafetySetting(workerApiKey), // Get safety setting for this worker key
+            configService.getSetting('max_retry', process.env.MAX_RETRY || '3').then(val => parseInt(val) || 3),
+            configService.getSetting('keepalive', process.env.KEEPALIVE || '0').then(val => String(val) === '1')
         ]);
-        
+
+        console.log(`Using MAX_RETRIES: ${MAX_RETRIES} (from database or environment variable)`);
+        console.log(`KEEPALIVE settings - keepAliveEnabled: ${keepAliveEnabled}, stream: ${stream}, isSafetyEnabled: ${isSafetyEnabled}`);
+
         // Check if web search functionality needs to be added
         // 1. Via web_search parameter or 2. Using a model ending with -search
         const isSearchModel = requestedModelId.endsWith('-search');
         const actualModelId = isSearchModel ? requestedModelId.replace('-search', '') : requestedModelId;
-        
+
         // If KEEPALIVE is enabled, this is a streaming request, and safety is disabled, we'll handle it specially
         const useKeepAlive = keepAliveEnabled && stream && !isSafetyEnabled;
+        console.log(`KEEPALIVE useKeepAlive decision: ${useKeepAlive}`);
     
         // If using keepalive, we'll make a non-streaming request to Gemini but send streaming responses to client
         const actualStreamMode = useKeepAlive ? false : stream;

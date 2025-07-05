@@ -27,20 +27,26 @@ router.get('/models', async (req, res, next) => {
             // Add other relevant properties if available/needed
         }));
 
-        // Add search versions for gemini-2.0+ series models
-        const searchModels = Object.keys(modelsConfig)
-            .filter(modelId => 
-                // Match gemini-2.0, gemini-2.5, gemini-3.0, etc. series models
-                /^gemini-[2-9]\.\d/.test(modelId) && 
-                // Exclude models that are already search versions
-                !modelId.endsWith('-search')
-            )
-            .map(modelId => ({
-                id: `${modelId}-search`,
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "google",
-            }));
+        // Check if web search is enabled
+        const webSearchEnabled = String(await configService.getSetting('web_search', '0')) === '1';
+
+        // Add search versions for gemini-2.0+ series models only if web search is enabled
+        let searchModels = [];
+        if (webSearchEnabled) {
+            searchModels = Object.keys(modelsConfig)
+                .filter(modelId =>
+                    // Match gemini-2.0, gemini-2.5, gemini-3.0, etc. series models
+                    /^gemini-[2-9]\.\d/.test(modelId) &&
+                    // Exclude models that are already search versions
+                    !modelId.endsWith('-search')
+                )
+                .map(modelId => ({
+                    id: `${modelId}-search`,
+                    object: "model",
+                    created: Math.floor(Date.now() / 1000),
+                    owned_by: "google",
+                }));
+        }
         
         // Add non-thinking versions for gemini-2.5-flash-preview models
         const nonThinkingModels = Object.keys(modelsConfig)
@@ -105,9 +111,12 @@ router.post('/chat/completions', async (req, res, next) => {
 
         // KEEPALIVE mode setup - prepare heartbeat callback if needed
         let keepAliveCallback = null;
-        const keepAliveEnabled = process.env.KEEPALIVE === '1';
-        const isSafetyEnabled = process.env.WORKER_API_KEY_SAFETY === '1';
+        const keepAliveEnabled = String(await configService.getSetting('keepalive', process.env.KEEPALIVE || '0')) === '1';
+        const isSafetyEnabled = await configService.getWorkerKeySafetySetting(workerApiKey);
         const useKeepAlive = keepAliveEnabled && stream && !isSafetyEnabled;
+
+        // Debug logging for KEEPALIVE mode
+        console.log(`KEEPALIVE Debug - keepAliveEnabled: ${keepAliveEnabled}, stream: ${stream}, isSafetyEnabled: ${isSafetyEnabled}, useKeepAlive: ${useKeepAlive}`);
 
         if (useKeepAlive) {
             // Set up KEEPALIVE heartbeat management
