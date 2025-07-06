@@ -218,53 +218,86 @@ if (isSuccess) {
 // --- Get Available Gemini Models --- (/api/admin/gemini-models)
 router.get('/gemini-models', async (req, res, next) => {
      try {
-         // Find *any* valid key to make the models list request, without updating the rotation index
-         // This prevents writing to the database and GitHub sync on page refreshes
-         const availableKey = await geminiKeyService.getNextAvailableGeminiKey(null, false); // Don't update index for read-only operation
-         if (!availableKey) {
-             console.warn("No available Gemini key found to fetch models list.");
-             return res.json([]); // Return empty list if no keys work
-         }
+         // Helper function to fetch models with a specific key
+         const fetchModelsWithKey = async (key) => {
+             const baseUrl = getGeminiBaseUrl();
+             const geminiUrl = `${baseUrl}/v1beta/models`;
 
-         const baseUrl = getGeminiBaseUrl();
-         const geminiUrl = `${baseUrl}/v1beta/models`;
-
-         // Get proxy agent
-         const agent = proxyPool.getNextProxyAgent();
-         const fetchOptions = {
-             method: 'GET',
-             headers: {
-                 'Content-Type': 'application/json',
-                 'x-goog-api-key': availableKey.key
+             // Get proxy agent
+             const agent = proxyPool.getNextProxyAgent();
+             const fetchOptions = {
+                 method: 'GET',
+                 headers: {
+                     'Content-Type': 'application/json',
+                     'x-goog-api-key': key.key
+                 }
+             };
+             if (agent) {
+                fetchOptions.agent = agent;
+                console.log(`Admin API (Get Models): Sending request via proxy ${agent.proxy.href}`);
+             } else {
+                 console.log(`Admin API (Get Models): Sending request directly.`);
              }
+
+             const response = await fetch(geminiUrl, fetchOptions);
+             return { response, keyId: key.id };
          };
-         if (agent) {
-            fetchOptions.agent = agent;
-            console.log(`Admin API (Get Models): Sending request via proxy ${agent.proxy.href}`);
-         } else {
-             console.log(`Admin API (Get Models): Sending request directly.`);
+
+         // Try to get models with up to 3 different keys
+         let lastError = null;
+         for (let attempt = 1; attempt <= 3; attempt++) {
+             // Find *any* valid key to make the models list request, without updating the rotation index
+             // This prevents writing to the database and GitHub sync on page refreshes
+             const availableKey = await geminiKeyService.getNextAvailableGeminiKey(null, false);
+             if (!availableKey) {
+                 console.warn(`Attempt ${attempt}: No available Gemini key found to fetch models list.`);
+                 break;
+             }
+
+             console.log(`Attempt ${attempt}: Fetching models with key ${availableKey.id}`);
+
+             try {
+                 const { response, keyId } = await fetchModelsWithKey(availableKey);
+
+                 if (response.ok) {
+                     // Success! Process and return the models
+                     const data = await response.json();
+                     const processedModels = (data.models || [])
+                        .filter(model => model.name?.startsWith('models/')) // Ensure correct format
+                        .map((model) => ({
+                             id: model.name.substring(7), // Extract ID
+                             name: model.displayName || model.name.substring(7), // Prefer displayName
+                             description: model.description,
+                             // Add other potentially useful fields: supportedGenerationMethods, version, etc.
+                         }));
+
+                     console.log(`Successfully fetched ${processedModels.length} models with key ${keyId}`);
+                     return res.json(processedModels);
+                 } else {
+                     // Handle error response
+                     const errorBody = await response.text();
+                     console.error(`Attempt ${attempt}: Error fetching Gemini models list (key ${keyId}): ${response.status} ${response.statusText}`, errorBody);
+
+                     // Mark key as invalid if it's a persistent error (401/403)
+                     if (response.status === 401 || response.status === 403) {
+                         console.log(`Marking key ${keyId} as invalid due to ${response.status} error during model list fetch`);
+                         await geminiKeyService.recordKeyError(keyId, response.status);
+                     }
+
+                     lastError = { status: response.status, body: errorBody };
+                     // Continue to next attempt with a different key
+                 }
+             } catch (fetchError) {
+                 console.error(`Attempt ${attempt}: Network error fetching models with key ${availableKey.id}:`, fetchError);
+                 lastError = fetchError;
+                 // Continue to next attempt
+             }
          }
 
-         const response = await fetch(geminiUrl, fetchOptions);
+         // If we get here, all attempts failed
+         console.warn("All attempts to fetch Gemini models failed. Returning empty list.");
+         return res.json([]); // Return empty list if all attempts fail
 
-         if (!response.ok) {
-             const errorBody = await response.text();
-             console.error(`Error fetching Gemini models list (key ${availableKey.id}): ${response.status} ${response.statusText}`, errorBody);
-             // Don't mark the key as bad for a failed models list request
-             return res.json([]); // Return empty on error
-         }
-
-         const data = await response.json();
-         const processedModels = (data.models || [])
-            .filter(model => model.name?.startsWith('models/')) // Ensure correct format
-            .map((model) => ({
-                 id: model.name.substring(7), // Extract ID
-                 name: model.displayName || model.name.substring(7), // Prefer displayName
-                 description: model.description,
-                 // Add other potentially useful fields: supportedGenerationMethods, version, etc.
-             }));
-
-         res.json(processedModels);
      } catch (error) {
          console.error('Error handling /api/admin/gemini-models:', error);
          next(error);

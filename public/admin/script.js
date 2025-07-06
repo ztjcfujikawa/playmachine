@@ -217,6 +217,21 @@ document.addEventListener('DOMContentLoaded', () => {
         loadingIndicator.classList.add('hidden');
     }
 
+    // Function to enable/disable add model form based on Gemini keys availability
+    function updateAddModelFormState(hasGeminiKeys) {
+        const addModelFormElements = addModelForm.querySelectorAll('input, select, button');
+        addModelFormElements.forEach(element => {
+            element.disabled = !hasGeminiKeys;
+        });
+
+        // Add visual indication when disabled
+        if (hasGeminiKeys) {
+            addModelForm.classList.remove('opacity-50', 'pointer-events-none');
+        } else {
+            addModelForm.classList.add('opacity-50', 'pointer-events-none');
+        }
+    }
+
     function showError(message, element = errorTextSpan, container = errorMessageDiv) {
         element.textContent = message;
         container.classList.remove('hidden');
@@ -379,6 +394,8 @@ async function renderGeminiKeys(keys) {
             geminiKeysListDiv.innerHTML = '<p class="text-gray-500">No Gemini keys configured.</p>';
             // Hide action buttons when no keys
             geminiKeysActionsDiv.classList.add('hidden');
+            // Disable add model form when no Gemini keys
+            updateAddModelFormState(false);
             return;
         }
 
@@ -394,6 +411,9 @@ async function renderGeminiKeys(keys) {
 
         // Show action buttons when keys exist
         geminiKeysActionsDiv.classList.remove('hidden');
+
+        // Enable add model form when Gemini keys exist
+        updateAddModelFormState(true);
 
         // Ensure models and category quotas are cached (should be loaded in initialLoad)
         if (cachedModels.length === 0) {
@@ -1064,6 +1084,8 @@ async function renderGeminiKeys(keys) {
             renderGeminiKeys(keys);
         } else {
              geminiKeysListDiv.innerHTML = '<p class="text-red-500">Failed to load Gemini keys.</p>';
+             // Disable add model form when failed to load keys
+             updateAddModelFormState(false);
         }
     }
 
@@ -1098,26 +1120,40 @@ async function renderGeminiKeys(keys) {
     }
 
     // New function to load available Gemini models
-    async function loadGeminiAvailableModels() {
+    async function loadGeminiAvailableModels(forceRefresh = false) {
         // Only proceed if we have Gemini keys
         const geminiKeysList = document.querySelectorAll('#gemini-keys-list .card-item');
         if (geminiKeysList.length === 0) {
             console.log("No Gemini keys available, skipping model list fetch");
+            // Clear cached models if no keys available
+            cachedGeminiModels = [];
             return;
         }
-        
+
+        // Skip if we already have cached models and not forcing refresh
+        if (!forceRefresh && cachedGeminiModels.length > 0) {
+            console.log("Using cached Gemini models");
+            updateModelIdDropdown(cachedGeminiModels);
+            return;
+        }
+
         try {
+            console.log("Fetching available Gemini models from server...");
             const models = await apiFetch('/gemini-models');
             if (models && Array.isArray(models)) {
                 cachedGeminiModels = models;
-                
+
                 // Update the model-id input field to include dropdown
                 updateModelIdDropdown(models);
-                
+
                 console.log(`Loaded ${models.length} available Gemini models`);
+            } else {
+                console.warn("No models returned from server");
+                cachedGeminiModels = [];
             }
         } catch (error) {
             console.error("Failed to load Gemini models:", error);
+            cachedGeminiModels = [];
         }
     }
 
@@ -1218,15 +1254,23 @@ async function renderGeminiKeys(keys) {
             }
         });
         
-        // Add click event to show the dropdown menu
-        modelIdInput.addEventListener('click', function() {
+        // Add click event to show the dropdown menu and refresh models if needed
+        modelIdInput.addEventListener('click', async function() {
+            // Check if we need to refresh the model list
+            const geminiKeysList = document.querySelectorAll('#gemini-keys-list .card-item');
+            if (geminiKeysList.length > 0 && (cachedGeminiModels.length === 0 || models.length === 0)) {
+                console.log("Refreshing Gemini models list on input click...");
+                await loadGeminiAvailableModels();
+                return; // loadGeminiAvailableModels will recreate the dropdown with updated models
+            }
+
             if (models.length > 0) {
                 // Show all options
                 const options = dropdown.querySelectorAll('div[data-value]');
                 options.forEach(option => {
                     option.style.display = 'block';
                 });
-                
+
                 dropdown.classList.remove('hidden');
             }
         });
@@ -1341,7 +1385,12 @@ async function renderGeminiKeys(keys) {
         // Reset form and reload keys
         addGeminiKeyForm.reset();
         await loadGeminiKeys();
-        
+
+        // If keys were successfully added, refresh the available models list
+        if (successCount > 0) {
+            await loadGeminiAvailableModels(true); // Force refresh after adding new keys
+        }
+
         // Show appropriate message based on results
         if (successCount > 0) {
             showSuccess(`Successfully added ${successCount} Gemini ${successCount === 1 ? 'key' : 'keys'}.`);
@@ -1522,6 +1571,14 @@ async function renderGeminiKeys(keys) {
     // Add/Update Model - Modified Submit Handler
     addModelForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+
+        // Check if there are any Gemini API keys before allowing model addition
+        const geminiKeysList = document.querySelectorAll('#gemini-keys-list .card-item');
+        if (geminiKeysList.length === 0) {
+            showError('无法添加模型：请先添加至少一个 Gemini API 密钥。');
+            return;
+        }
+
         const formData = new FormData(addModelForm);
         const data = {
             id: formData.get('id').trim(),
@@ -1935,6 +1992,19 @@ async function renderGeminiKeys(keys) {
             content.classList.add('hidden');
         });
         document.getElementById(`${tabName}-content`).classList.remove('hidden');
+
+        // Handle Managed Models container visibility
+        const modelsListElement = document.getElementById('models-list');
+        const managedModelsSection = modelsListElement ? modelsListElement.closest('section') : null;
+        if (managedModelsSection) {
+            if (tabName === 'vertex') {
+                // Hide Managed Models container when Vertex tab is active
+                managedModelsSection.classList.add('hidden');
+            } else {
+                // Show Managed Models container when Gemini tab is active
+                managedModelsSection.classList.remove('hidden');
+            }
+        }
     }
 
     // --- Vertex Configuration Functions ---
