@@ -26,7 +26,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}-huggingface
+          images: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -34,5 +34,5 @@ jobs:
           context: .
           file: ./Dockerfile.huggingface
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
           labels: ${{ steps.meta.outputs.labels }}
