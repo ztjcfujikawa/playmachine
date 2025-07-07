@@ -71,7 +71,7 @@ let dbOperationQueue = Promise.resolve();
  * @returns {Promise<any>} Returns the result of the callback function.
  */
 const serializeDb = (callback) => {
-    // Chain the operation to the queue with error isolation
+    // Chain the operation to the queue
     dbOperationQueue = dbOperationQueue.then(async () => {
         try {
             return await callback();
@@ -80,10 +80,6 @@ const serializeDb = (callback) => {
             console.error('Error in serialized database operation:', error);
             throw error;
         }
-    }).catch(error => {
-        // Isolate errors to prevent queue corruption
-        console.error('Queue operation failed, continuing with next operation:', error);
-        throw error;
     });
 
     return dbOperationQueue;
@@ -116,50 +112,41 @@ async function getSetting(key, defaultValue = null) {
  * @param {string} key The setting key.
  * @param {any} value The value to set.
  * @param {boolean} [skipSync=false] Skip sync to GitHub if true.
+ * @param {boolean} [useTransaction=false] Whether this call is part of an existing transaction.
  * @returns {Promise<void>}
  */
-async function setSetting(key, value, skipSync = false) {
-    return await serializeDb(async () => {
-        // Convert value to string for storage
-        const valueToStore = (typeof value === 'object' && value !== null)
-            ? JSON.stringify(value)
-            : String(value); // Ensure it's a string if not object/array
-
+async function setSetting(key, value, skipSync = false, useTransaction = false) {
+    // Convert value to string for storage
+    const valueToStore = (typeof value === 'object' && value !== null)
+        ? JSON.stringify(value)
+        : String(value); // Ensure it's a string if not object/array
+    
+    // If not part of an existing transaction, start a new one
+    if (!useTransaction) {
         await runDb('BEGIN TRANSACTION');
-
-        try {
-            // Update or insert the setting
-            await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
-
+    }
+    
+    try {
+        // Update or insert the setting
+        await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
+        
+        // If we started a transaction, commit it
+        if (!useTransaction) {
             await runDb('COMMIT');
-
+            
             // Sync updates to GitHub (unless skipped)
             if (!skipSync) {
                 await syncToGitHub();
             }
-        } catch (error) {
-            await runDb('ROLLBACK');
-            // Re-throw the error to be handled by the caller
-            throw error;
         }
-    });
-}
-
-/**
- * Sets a specific setting value in the 'settings' table within an existing transaction.
- * Use this when you need to update settings as part of a larger transaction.
- * @param {string} key The setting key.
- * @param {any} value The value to set.
- * @returns {Promise<void>}
- */
-async function setSettingInTransaction(key, value) {
-    // Convert value to string for storage
-    const valueToStore = (typeof value === 'object' && value !== null)
-        ? JSON.stringify(value)
-        : String(value);
-
-    // Update or insert the setting (assumes transaction is already started)
-    await runDb('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, valueToStore]);
+    } catch (error) {
+        // If we started a transaction and an error occurred, roll it back
+        if (!useTransaction) {
+            await runDb('ROLLBACK');
+        }
+        // Re-throw the error to be handled by the caller
+        throw error;
+    }
 }
 
 
@@ -488,5 +475,4 @@ module.exports = {
     getDb,
     allDb,
     serializeDb,
-    setSettingInTransaction,
 };

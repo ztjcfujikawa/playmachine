@@ -50,7 +50,7 @@ if (githubProject && githubToken) {
   }
 }
 
-// Initialize the database connection with optimized settings
+// Initialize the database connection
 // The OPEN_READWRITE | OPEN_CREATE flag ensures the file is created if it doesn't exist.
 const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, async (err) => {
   if (err) {
@@ -58,26 +58,7 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
     throw err; // Throw error to stop the application if DB connection fails
   } else {
     console.log('Connected to the SQLite database.');
-
-    // Configure database for better concurrency and performance
-    db.configure('busyTimeout', 30000); // 30 second timeout for busy database
-
-    // Enable WAL mode for better concurrency
-    db.run('PRAGMA journal_mode = WAL', (err) => {
-      if (err) {
-        console.warn('Failed to enable WAL mode:', err.message);
-      } else {
-        console.log('WAL mode enabled for better concurrency');
-      }
-    });
-
-    // Set synchronous mode to NORMAL for better performance
-    db.run('PRAGMA synchronous = NORMAL', (err) => {
-      if (err) {
-        console.warn('Failed to set synchronous mode:', err.message);
-      }
-    });
-
+    
     // Initialize database schema first
     await new Promise((resolve, reject) => {
       initializeDatabase((err) => {
@@ -85,7 +66,7 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
         else resolve();
       });
     });
-
+    
     // Try to download database from GitHub if configured
     if (githubSync) {
       try {

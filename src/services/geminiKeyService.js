@@ -123,7 +123,7 @@ async function addMultipleGeminiKeys(apiKeys) {
 
             const newKeyIds = [];
 
-            // Process each key with individual error handling
+            // Process each key
             for (const apiKey of apiKeys) {
                 try {
                     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
@@ -138,21 +138,9 @@ async function addMultipleGeminiKeys(apiKeys) {
 
                     const trimmedApiKey = apiKey.trim();
 
-                    // Check for duplicates before attempting insert
-                    const existingKey = await configService.getDb('SELECT id FROM gemini_keys WHERE api_key = ?', [trimmedApiKey]);
-                    if (existingKey) {
-                        results.push({
-                            key: trimmedApiKey,
-                            success: false,
-                            error: 'Duplicate API key.'
-                        });
-                        failureCount++;
-                        continue;
-                    }
-
-                    // Generate a unique ID with better uniqueness
+                    // Generate a unique ID
                     const timestamp = Date.now();
-                    const randomString = crypto.randomBytes(6).toString('hex'); // Increased entropy
+                    const randomString = crypto.randomBytes(4).toString('hex');
                     const keyId = `gk-${timestamp}-${randomString}`;
                     const keyName = keyId;
 
@@ -179,23 +167,21 @@ async function addMultipleGeminiKeys(apiKeys) {
                     console.log(`Added key ${keyId} to batch.`);
 
                 } catch (keyError) {
-                    // Enhanced error handling with specific error types
-                    let errorMessage = keyError.message;
-                    if (keyError.message.includes('UNIQUE constraint failed')) {
-                        errorMessage = 'Duplicate API key.';
-                    } else if (keyError.message.includes('CHECK constraint failed')) {
-                        errorMessage = 'Invalid key format.';
+                    if (keyError.message.includes('UNIQUE constraint failed: gemini_keys.api_key')) {
+                        results.push({
+                            key: apiKey,
+                            success: false,
+                            error: 'Duplicate API key.'
+                        });
+                    } else {
+                        results.push({
+                            key: apiKey,
+                            success: false,
+                            error: keyError.message
+                        });
                     }
-
-                    results.push({
-                        key: apiKey,
-                        success: false,
-                        error: errorMessage
-                    });
                     failureCount++;
                     console.error(`Error adding key ${apiKey}:`, keyError);
-
-                    // Continue processing other keys instead of failing the entire batch
                 }
             }
 
@@ -591,15 +577,14 @@ async function getNextAvailableGeminiKey(requestedModelId, updateIndex = true) {
             // Get the most current index value within the transaction if updating
             let currentIndex;
             if (updateIndex) {
-                // Use atomic read within transaction to prevent race conditions
-                const refreshedIndexRow = await configService.getDb('SELECT value FROM settings WHERE key = ? FOR UPDATE', ['gemini_key_index']);
-                const refreshedIndexSetting = refreshedIndexRow ? parseInt(refreshedIndexRow.value) || 0 : 0;
-                currentIndex = (refreshedIndexSetting >= 0) ? refreshedIndexSetting : 0;
+                const refreshedIndexSetting = await configService.getSetting('gemini_key_index', 0);
+                currentIndex = (typeof refreshedIndexSetting === 'number' && refreshedIndexSetting >= 0) ? 
+                    refreshedIndexSetting : 0;
             } else {
-                currentIndex = (typeof currentIndexSetting === 'number' && currentIndexSetting >= 0) ?
+                currentIndex = (typeof currentIndexSetting === 'number' && currentIndexSetting >= 0) ? 
                     currentIndexSetting : 0;
             }
-
+            
             if (currentIndex >= allKeyIds.length) {
                 currentIndex = 0; // Reset if index is out of bounds
             }
@@ -799,37 +784,19 @@ async function incrementKeyUsage(keyId, modelId, category) {
                 categoryUsage.flash = (categoryUsage.flash || 0) + 1;
             }
 
-            // Update the database with optimistic locking to prevent race conditions
+            // Update the database (serializeDb provides atomicity)
             const sql = `
                 UPDATE gemini_keys
                 SET usage_date = ?, model_usage = ?, category_usage = ?, consecutive_429_counts = ?
-                WHERE id = ? AND usage_date = ?
+                WHERE id = ?
             `;
-            const result = await configService.runDb(sql, [
+            await configService.runDb(sql, [
                 usageDate,
                 JSON.stringify(modelUsage),
                 JSON.stringify(categoryUsage),
                 JSON.stringify(consecutive429Counts), // Store empty object (reset counters)
-                keyId,
-                keyRow.usage_date // Optimistic locking check
+                keyId
             ]);
-
-            if (result.changes === 0) {
-                console.warn(`Concurrent modification detected for key ${keyId}, usage may not be accurate`);
-                // Fallback: try without optimistic locking for critical updates
-                const fallbackSql = `
-                    UPDATE gemini_keys
-                    SET usage_date = ?, model_usage = ?, category_usage = ?, consecutive_429_counts = ?
-                    WHERE id = ?
-                `;
-                await configService.runDb(fallbackSql, [
-                    usageDate,
-                    JSON.stringify(modelUsage),
-                    JSON.stringify(categoryUsage),
-                    JSON.stringify(consecutive429Counts),
-                    keyId
-                ]);
-            }
 
             console.log(`Usage for key ${keyId} updated. Date: ${usageDate}, Model: ${modelId} (${category}), Models: ${JSON.stringify(modelUsage)}, Categories: ${JSON.stringify(categoryUsage)}, 429Counts reset.`);
 

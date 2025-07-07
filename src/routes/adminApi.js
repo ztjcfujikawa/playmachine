@@ -8,43 +8,8 @@ const { syncToGitHub } = require('../db');
 const proxyPool = require('../utils/proxyPool'); // Import the proxy pool module
 const router = express.Router();
 
-// Simple rate limiting for admin operations
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 100; // Max requests per window
-
-function rateLimitMiddleware(req, res, next) {
-    const clientId = req.ip || 'unknown';
-    const now = Date.now();
-
-    if (!rateLimitMap.has(clientId)) {
-        rateLimitMap.set(clientId, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-        return next();
-    }
-
-    const clientData = rateLimitMap.get(clientId);
-
-    if (now > clientData.resetTime) {
-        // Reset the window
-        clientData.count = 1;
-        clientData.resetTime = now + RATE_LIMIT_WINDOW;
-        return next();
-    }
-
-    if (clientData.count >= RATE_LIMIT_MAX_REQUESTS) {
-        return res.status(429).json({
-            error: 'Too many requests. Please try again later.',
-            retryAfter: Math.ceil((clientData.resetTime - now) / 1000)
-        });
-    }
-
-    clientData.count++;
-    next();
-}
-
-// Apply admin authentication and rate limiting middleware to all /api/admin routes
+// Apply admin authentication middleware to all /api/admin routes
 router.use(requireAdminAuth);
-router.use(rateLimitMiddleware);
 
 // --- Helper for parsing request body (already exists in helpers.js, but useful here) ---
 // Ensure express.json() middleware is applied in server.js
@@ -707,5 +672,6 @@ router.route('/system-settings')
             next(error);
         }
     });
+
 
 module.exports = router;
