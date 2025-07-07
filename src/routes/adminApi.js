@@ -8,8 +8,43 @@ const { syncToGitHub } = require('../db');
 const proxyPool = require('../utils/proxyPool'); // Import the proxy pool module
 const router = express.Router();
 
-// Apply admin authentication middleware to all /api/admin routes
+// Simple rate limiting for admin operations
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 100; // Max requests per window
+
+function rateLimitMiddleware(req, res, next) {
+    const clientId = req.ip || 'unknown';
+    const now = Date.now();
+
+    if (!rateLimitMap.has(clientId)) {
+        rateLimitMap.set(clientId, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+        return next();
+    }
+
+    const clientData = rateLimitMap.get(clientId);
+
+    if (now > clientData.resetTime) {
+        // Reset the window
+        clientData.count = 1;
+        clientData.resetTime = now + RATE_LIMIT_WINDOW;
+        return next();
+    }
+
+    if (clientData.count >= RATE_LIMIT_MAX_REQUESTS) {
+        return res.status(429).json({
+            error: 'Too many requests. Please try again later.',
+            retryAfter: Math.ceil((clientData.resetTime - now) / 1000)
+        });
+    }
+
+    clientData.count++;
+    next();
+}
+
+// Apply admin authentication and rate limiting middleware to all /api/admin routes
 router.use(requireAdminAuth);
+router.use(rateLimitMiddleware);
 
 // --- Helper for parsing request body (already exists in helpers.js, but useful here) ---
 // Ensure express.json() middleware is applied in server.js
@@ -45,6 +80,30 @@ router.route('/gemini-keys')
             next(error);
         }
     });
+
+// --- Batch Add Gemini Keys --- (/api/admin/gemini-keys/batch)
+router.post('/gemini-keys/batch', async (req, res, next) => {
+    try {
+        const { keys } = parseBody(req);
+        if (!Array.isArray(keys) || keys.length === 0) {
+            return res.status(400).json({ error: 'Request body must include a valid array of API keys' });
+        }
+
+        // Validate that all items are strings
+        const invalidKeys = keys.filter(key => !key || typeof key !== 'string');
+        if (invalidKeys.length > 0) {
+            return res.status(400).json({ error: 'All API keys must be valid strings' });
+        }
+
+        const result = await geminiKeyService.addMultipleGeminiKeys(keys);
+        res.status(201).json({
+            success: true,
+            ...result
+        });
+    } catch (error) {
+        next(error);
+    }
+});
 
 router.delete('/gemini-keys/:id', async (req, res, next) => {
     try {
@@ -648,6 +707,5 @@ router.route('/system-settings')
             next(error);
         }
     });
-
 
 module.exports = router;

@@ -196,7 +196,10 @@ class GitHubSync {
             console.log('Downloaded database file is plaintext');
           }
           
-          // Write the file to local path
+          // Clean up WAL files before overwriting database
+          await this.cleanupWalFiles();
+
+          // Write the file to local path (always overwrite with GitHub version)
           await fs.writeFile(this.dbPath, buffer);
           console.log('Database successfully downloaded and saved locally');
           this.initialSyncCompleted = true;
@@ -315,6 +318,29 @@ class GitHubSync {
     } catch (error) {
       console.error('Error uploading database to GitHub:', error.message);
       return false;
+    }
+  }
+
+  // Clean up WAL and SHM files to prevent conflicts with new database
+  async cleanupWalFiles() {
+    const walPath = this.dbPath + '-wal';
+    const shmPath = this.dbPath + '-shm';
+
+    try {
+      // Remove WAL file if it exists
+      if (await fs.access(walPath).then(() => true).catch(() => false)) {
+        await fs.unlink(walPath);
+        console.log('Removed existing WAL file before database download');
+      }
+
+      // Remove SHM file if it exists
+      if (await fs.access(shmPath).then(() => true).catch(() => false)) {
+        await fs.unlink(shmPath);
+        console.log('Removed existing SHM file before database download');
+      }
+    } catch (error) {
+      console.warn('Warning: Failed to clean up WAL/SHM files:', error.message);
+      // Continue anyway, SQLite can handle this
     }
   }
 }

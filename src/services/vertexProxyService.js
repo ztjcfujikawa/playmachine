@@ -104,11 +104,16 @@ async function initializeVertexCredentials() {
     if (isVertexInitialized) return; // Already initialized
 
     // First try to load configuration from database (priority)
+    // Only attempt database access if tables are likely initialized
     let databaseConfig = null;
     try {
-        databaseConfig = await configService.getSetting('vertex_config', null);
+        // Check if we can access the database safely
+        const testQuery = await configService.getDb("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'");
+        if (testQuery) {
+            databaseConfig = await configService.getSetting('vertex_config', null);
+        }
     } catch (error) {
-        console.warn("Failed to load Vertex config from database, falling back to environment variables:", error);
+        console.warn("Failed to load Vertex config from database, falling back to environment variables:", error.message);
     }
 
     // Check database configuration first
@@ -609,16 +614,23 @@ async function proxyVertexChatCompletions(openAIRequestBody, workerApiKey, strea
             let expressApiKey = null;
 
             try {
-                const databaseConfig = await configService.getSetting('vertex_config', null);
-                if (databaseConfig && databaseConfig.expressApiKey) {
-                    expressApiKey = databaseConfig.expressApiKey;
-                    console.log("Using Express API Key from database");
+                // Check if database tables exist before querying
+                const testQuery = await configService.getDb("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'");
+                if (testQuery) {
+                    const databaseConfig = await configService.getSetting('vertex_config', null);
+                    if (databaseConfig && databaseConfig.expressApiKey) {
+                        expressApiKey = databaseConfig.expressApiKey;
+                        console.log("Using Express API Key from database");
+                    } else {
+                        expressApiKey = process.env.EXPRESS_API_KEY;
+                        console.log("Using Express API Key from environment");
+                    }
                 } else {
                     expressApiKey = process.env.EXPRESS_API_KEY;
-                    console.log("Using Express API Key from environment");
+                    console.log("Using Express API Key from environment (database not ready)");
                 }
             } catch (error) {
-                console.warn("Failed to load Express API Key from database, using environment:", error);
+                console.warn("Failed to load Express API Key from database, using environment:", error.message);
                 expressApiKey = process.env.EXPRESS_API_KEY;
             }
 

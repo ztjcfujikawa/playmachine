@@ -76,11 +76,19 @@ document.addEventListener('DOMContentLoaded', () => {
     let isRunningAllTests = false;
     let testCancelRequested = false;
     let currentTestBatch = [];
+    let operationInProgress = false; // Prevent concurrent database operations
     // No need for a separate errorKeyIds cache, as errorStatus is now part of the key data
 
     // --- Run All Test Functions ---
     async function runAllGeminiKeysTest() {
+        // Prevent concurrent operations
+        if (operationInProgress) {
+            showError(t('operation_in_progress') || 'Another operation is in progress. Please wait.');
+            return;
+        }
+
         try {
+            operationInProgress = true; // Lock operations
             isRunningAllTests = true;
             testCancelRequested = false;
 
@@ -103,8 +111,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update initial progress
             updateTestProgress(completedTests, totalKeys, t('preparing_tests'));
 
-            // Process keys in batches of 5
-            const batchSize = 5;
+            // Process keys in batches to balance performance and server load
+            const batchSize = 5; // Optimal batch size for testing
             for (let i = 0; i < keys.length; i += batchSize) {
                 if (testCancelRequested) {
                     break;
@@ -123,9 +131,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 completedTests += batch.length;
                 updateTestProgress(completedTests, totalKeys, t('completed_tests', completedTests, totalKeys));
 
-                // Small delay between batches to avoid overwhelming the server
+                // Increased delay between batches to reduce server load
                 if (i + batchSize < keys.length && !testCancelRequested) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Increased from 500ms to 1000ms
                 }
             }
 
@@ -151,6 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showError(t('failed_to_run_tests', error.message));
             updateTestProgress(0, 0, t('test_run_failed'));
         } finally {
+            operationInProgress = false; // Release lock
             isRunningAllTests = false;
             runAllTestBtn.disabled = false;
             cancelAllTestBtn.disabled = true;
@@ -1292,6 +1301,13 @@ async function renderGeminiKeys(keys) {
     // Add Gemini Key with support for batch input
     addGeminiKeyForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+
+        // Prevent concurrent operations
+        if (operationInProgress) {
+            showError(t('operation_in_progress') || 'Another operation is in progress. Please wait.');
+            return;
+        }
+
         const formData = new FormData(addGeminiKeyForm);
         const data = Object.fromEntries(formData.entries());
         const geminiKeyInput = data.key ? data.key.trim() : '';
@@ -1352,36 +1368,117 @@ async function renderGeminiKeys(keys) {
             showError(`Invalid API key format detected: ${maskedInvalidKeys.join(', ')}`);
         }
         
-        // 改为串行处理API密钥添加，避免并发请求导致的问题
+        operationInProgress = true; // Lock operations
         showLoading();
         let successCount = 0;
-        
-        // 逐个处理每个API Key
-        for (const key of validKeys) {
-            let keyData = { key: key }; // Base data
+        let failureCount = 0;
 
-            // Only include name if adding a single key
-            if (validKeys.length === 1 && data.name) {
-                keyData.name = data.name.trim();
-            }
+        try {
+            if (validKeys.length === 1) {
+                // Single key - use original API with name support
+                let keyData = { key: validKeys[0] };
+                if (data.name) {
+                    keyData.name = data.name.trim();
+                }
 
-            try {
                 const result = await apiFetch('/gemini-keys', {
                     method: 'POST',
                     body: JSON.stringify(keyData),
                 });
-                
+
                 if (result && result.success) {
-                    successCount++;
+                    successCount = 1;
+                    failureCount = 0;
+                } else {
+                    successCount = 0;
+                    failureCount = 1;
                 }
-            } catch (error) {
-                console.error(`Error adding key ${key}:`, error);
-                // 继续处理下一个密钥
+            } else if (validKeys.length <= 50) {
+                // Medium batch - use single batch API call
+                const result = await apiFetch('/gemini-keys/batch', {
+                    method: 'POST',
+                    body: JSON.stringify({ keys: validKeys }),
+                });
+
+                if (result && result.success) {
+                    successCount = result.successCount || 0;
+                    failureCount = result.failureCount || 0;
+
+                    // Log detailed results for debugging
+                    if (result.results && result.results.length > 0) {
+                        const failures = result.results.filter(r => !r.success);
+                        if (failures.length > 0) {
+                            console.warn('Some keys failed to add:', failures);
+                        }
+                    }
+                } else {
+                    successCount = 0;
+                    failureCount = validKeys.length;
+                }
+            } else {
+                // Large batch - split into chunks and process with limited concurrency
+                const chunkSize = 20; // Process 20 keys per chunk
+                const maxConcurrency = 3; // Maximum 3 concurrent requests
+
+                // Split keys into chunks
+                const chunks = [];
+                for (let i = 0; i < validKeys.length; i += chunkSize) {
+                    chunks.push(validKeys.slice(i, i + chunkSize));
+                }
+
+                // Process chunks with limited concurrency and progress feedback
+                for (let i = 0; i < chunks.length; i += maxConcurrency) {
+                    const currentChunks = chunks.slice(i, i + maxConcurrency);
+
+                    // Show progress
+                    const processedChunks = Math.floor(i / maxConcurrency) + 1;
+                    const totalChunks = Math.ceil(chunks.length / maxConcurrency);
+                    console.log(`Processing batch ${processedChunks}/${totalChunks} (${validKeys.length} total keys)`);
+
+                    // Process current batch of chunks concurrently
+                    const chunkPromises = currentChunks.map((chunk, chunkIndex) =>
+                        apiFetch('/gemini-keys/batch', {
+                            method: 'POST',
+                            body: JSON.stringify({ keys: chunk }),
+                        }).then(result => {
+                            console.log(`Chunk ${i + chunkIndex + 1} completed: ${result?.successCount || 0} success, ${result?.failureCount || 0} failed`);
+                            return result;
+                        }).catch(error => {
+                            console.error(`Error in chunk ${i + chunkIndex + 1} processing:`, error);
+                            return { success: false, successCount: 0, failureCount: chunk.length };
+                        })
+                    );
+
+                    const chunkResults = await Promise.all(chunkPromises);
+
+                    // Aggregate results
+                    chunkResults.forEach(result => {
+                        if (result && result.success) {
+                            successCount += result.successCount || 0;
+                            failureCount += result.failureCount || 0;
+                        } else {
+                            // If the entire chunk failed, count all keys as failures
+                            const chunkIndex = chunkResults.indexOf(result);
+                            const chunkSize = currentChunks[chunkIndex]?.length || 0;
+                            failureCount += chunkSize;
+                        }
+                    });
+
+                    // Small delay between batches to avoid overwhelming the server
+                    if (i + maxConcurrency < chunks.length) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                    }
+                }
             }
+        } catch (error) {
+            console.error('Error during batch add:', error);
+            successCount = 0;
+            failureCount = validKeys.length;
+        } finally {
+            operationInProgress = false; // Release lock
+            hideLoading();
         }
-        
-        const failureCount = validKeys.length - successCount;
-        
+
         // Reset form and reload keys
         addGeminiKeyForm.reset();
         await loadGeminiKeys();
@@ -1724,11 +1821,18 @@ async function renderGeminiKeys(keys) {
 
     // Clean Error Keys Logic
     cleanErrorKeysBtn.addEventListener('click', async () => {
+        // Prevent concurrent operations
+        if (operationInProgress) {
+            showError(t('operation_in_progress') || 'Another operation is in progress. Please wait.');
+            return;
+        }
+
         if (!confirm(t('clean_error_keys_confirm'))) {
             return;
         }
 
         try {
+            operationInProgress = true; // Lock operations
             showLoading();
             const result = await apiFetch('/error-keys', {
                 method: 'DELETE',
@@ -1746,6 +1850,7 @@ async function renderGeminiKeys(keys) {
             console.error('Error cleaning error keys:', error);
             showError(t('failed_to_clean_error_keys', error.message));
         } finally {
+            operationInProgress = false; // Release lock
             hideLoading();
         }
     });
